@@ -11,7 +11,7 @@ Arduino sketch for the ESP8266 CAA rotator controller.
 ## Default network
 
 - AP SSID: `CAA-Rotator-<chipid>`
-- AP password: `caa-rotator`
+- AP password: `012345678`
 - Control page: `http://192.168.4.1`
 - ASCOM TCP protocol port: `4030`
 - WebSocket status port: `81`

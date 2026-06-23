@@ -21,7 +21,7 @@
 #define WEBSOCKET_PORT 81
 #define MAX_TCP_CLIENTS 4
 
-const char *AP_PASSWORD = "caa-rotator";
+const char *AP_PASSWORD = "012345678";
 IPAddress apIp(192, 168, 4, 1);
 IPAddress apGateway(192, 168, 4, 1);
 IPAddress apSubnet(255, 255, 255, 0);

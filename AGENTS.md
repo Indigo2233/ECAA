@@ -26,7 +26,7 @@ Keep these stable unless a new ASCOM driver slot is intentionally required:
 - ASCOM driver description: `ASCOM Rotator Driver for ECAA ESP8266.`
 - Driver DLL assembly name: `ASCOM.ECAA.Rotator.dll`
 - ESP8266 AP SSID pattern: `CAA-Rotator-<chipid>`
-- ESP8266 AP password: `caa-rotator`
+- ESP8266 AP password: `012345678`
 - Mobile control URL: `http://192.168.4.1`
 - ASCOM TCP port: `4030`
 - WebSocket port: `81`
