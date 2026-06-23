@@ -39,6 +39,7 @@ struct RotatorSettings {
   bool reversed;
   char staSsid[32];
   char staPassword[64];
+  long homeOffsetSteps;
 };
 
 RotatorSettings settings;
@@ -171,7 +172,8 @@ function setState(s){
  $('acceleration').value=s.acceleration??1000;
  $('manualStep').value=s.manualStep??50;
  if(document.activeElement!==$('staSsid'))$('staSsid').value=s.staSsid||'';
- $('network').textContent='AP '+(s.apSsid||'')+'  http://'+(s.apIp||'192.168.4.1')+'  TCP '+(s.tcpPort||4030);
+ const staIp=s.staIp&&s.staIp!=='0.0.0.0'?s.staIp:'not connected';
+ $('network').textContent='AP: '+(s.apIp||'192.168.4.1')+' | STA: '+staIp+' | TCP: '+(s.tcpPort||4030);
 }
 async function refresh(){try{setState(await api('/api/status'));}catch(e){$('link').textContent='Disconnected';}}
 function connectWs(){
@@ -228,11 +230,16 @@ void loadSettings() {
     settings.findHomeStepSize = 100;
     settings.hold = false;
     settings.reversed = false;
+    settings.homeOffsetSteps = 0;
     EEPROM.put(0, settings);
     EEPROM.commit();
   }
   if (settings.maxSteps <= 0) {
     settings.maxSteps = (long)settings.stepsPerDegree * 720L;
+  }
+  long center = settings.maxSteps / 2L;
+  if (settings.homeOffsetSteps < -center || settings.homeOffsetSteps > center) {
+    settings.homeOffsetSteps = 0;
   }
 }
 
@@ -254,8 +261,40 @@ bool hallTriggered() {
   return digitalRead(HALL_PIN) == LOW;
 }
 
-float stepsToAngle(long steps) {
-  float angle = ((float)steps - 360.0F * settings.stepsPerDegree) / settings.stepsPerDegree;
+long mechanicalHomeSteps() {
+  return settings.maxSteps / 2L;
+}
+
+long zeroPhysicalSteps() {
+  return mechanicalHomeSteps() + settings.homeOffsetSteps;
+}
+
+long physicalToLogicalSteps(long physicalSteps) {
+  return physicalSteps - settings.homeOffsetSteps;
+}
+
+long logicalToPhysicalSteps(long logicalSteps) {
+  return logicalSteps + settings.homeOffsetSteps;
+}
+
+void clampHomeOffset() {
+  long center = mechanicalHomeSteps();
+  if (settings.homeOffsetSteps < -center) {
+    settings.homeOffsetSteps = -center;
+  }
+  if (settings.homeOffsetSteps > center) {
+    settings.homeOffsetSteps = center;
+  }
+}
+
+void setCurrentLogicalPosition(long logicalSteps) {
+  settings.homeOffsetSteps = stepper.currentPosition() - logicalSteps;
+  clampHomeOffset();
+}
+
+float stepsToAngle(long physicalSteps) {
+  long logicalSteps = physicalToLogicalSteps(physicalSteps);
+  float angle = ((float)logicalSteps - mechanicalHomeSteps()) / settings.stepsPerDegree;
   while (angle < 0.0F) angle += 360.0F;
   while (angle >= 360.0F) angle -= 360.0F;
   return angle;
@@ -267,18 +306,31 @@ float normalizeAngle(float angle) {
   return angle;
 }
 
-long angleToSteps(float angle) {
-  float normalized = normalizeAngle(angle);
-  long targetA = lround(normalized * settings.stepsPerDegree);
-  long targetB = lround((normalized + 360.0F) * settings.stepsPerDegree);
-  long current = stepper.currentPosition();
-  if (abs(current - targetA) <= abs(current - targetB)) {
-    return targetA;
-  }
-  return targetB;
+bool physicalStepIsInRange(long physicalSteps) {
+  return physicalSteps >= 0 && physicalSteps <= settings.maxSteps;
 }
 
-bool moveToSteps(long target) {
+long choosePhysicalTarget(long physicalA, long physicalB) {
+  bool validA = physicalStepIsInRange(physicalA);
+  bool validB = physicalStepIsInRange(physicalB);
+  if (validA && validB) {
+    long current = stepper.currentPosition();
+    return abs(current - physicalA) <= abs(current - physicalB) ? physicalA : physicalB;
+  }
+  if (validA) {
+    return physicalA;
+  }
+  return physicalB;
+}
+
+long angleToPhysicalSteps(float angle) {
+  float normalized = normalizeAngle(angle);
+  long logicalA = lround(normalized * settings.stepsPerDegree);
+  long logicalB = lround((normalized + 360.0F) * settings.stepsPerDegree);
+  return choosePhysicalTarget(logicalToPhysicalSteps(logicalA), logicalToPhysicalSteps(logicalB));
+}
+
+bool moveToPhysicalSteps(long target) {
   if (!findingHome && (target < 0 || target > settings.maxSteps)) {
     return false;
   }
@@ -287,13 +339,24 @@ bool moveToSteps(long target) {
   return true;
 }
 
+bool moveToLogicalSteps(long logicalTarget) {
+  long revolutionSteps = 360L * settings.stepsPerDegree;
+  long physicalA = logicalToPhysicalSteps(logicalTarget);
+  long physicalB = logicalToPhysicalSteps(logicalTarget + revolutionSteps);
+  long physicalC = logicalToPhysicalSteps(logicalTarget - revolutionSteps);
+
+  long target = choosePhysicalTarget(physicalA, physicalB);
+  target = choosePhysicalTarget(target, physicalC);
+  return moveToPhysicalSteps(target);
+}
+
 String boolText(bool value) {
   return value ? "true" : "false";
 }
 
 String statusResponse() {
   String response = "P ";
-  response += stepper.currentPosition();
+  response += physicalToLogicalSteps(stepper.currentPosition());
   response += ";M ";
   response += boolText(stepper.distanceToGo() != 0 || findingHome);
   response += "#";
@@ -309,9 +372,17 @@ String statusJson() {
   json += "\"firmware\":";
   json += FIRMWARE_VERSION;
   json += ",\"positionSteps\":";
-  json += stepper.currentPosition();
+  json += physicalToLogicalSteps(stepper.currentPosition());
   json += ",\"targetSteps\":";
+  json += physicalToLogicalSteps(stepper.targetPosition());
+  json += ",\"mechanicalSteps\":";
+  json += stepper.currentPosition();
+  json += ",\"targetMechanicalSteps\":";
   json += stepper.targetPosition();
+  json += ",\"homeOffsetSteps\":";
+  json += settings.homeOffsetSteps;
+  json += ",\"zeroPhysicalSteps\":";
+  json += zeroPhysicalSteps();
   json += ",\"angle\":";
   json += String(stepsToAngle(stepper.currentPosition()), 2);
   json += ",\"targetAngle\":";
@@ -381,13 +452,13 @@ String processCommand(String command) {
     case 'G':
       return statusResponse();
     case 'P':
-      stepper.setCurrentPosition(value);
+      setCurrentLogicalPosition(value);
       positionSaved = true;
       saveSettings();
       broadcastStatus();
       return statusResponse();
     case 'M':
-      if (!moveToSteps(value)) {
+      if (!moveToLogicalSteps(value)) {
         return "ERR:out_of_range#";
       }
       broadcastStatus();
@@ -424,6 +495,7 @@ String processCommand(String command) {
       }
       settings.stepsPerDegree = (int)value;
       settings.maxSteps = (long)settings.stepsPerDegree * 720L;
+      clampHomeOffset();
       saveSettings();
       broadcastStatus();
       return String("D ") + settings.stepsPerDegree + "#";
@@ -519,18 +591,18 @@ void handleMoveApi() {
   double value;
   bool ok = false;
   if (extractNumber(body, "steps", value)) {
-    ok = moveToSteps(lround(value));
+    ok = moveToLogicalSteps(lround(value));
   } else if (extractNumber(body, "angle", value)) {
-    ok = moveToSteps(angleToSteps(value));
+    ok = moveToPhysicalSteps(angleToPhysicalSteps(value));
   } else if (extractNumber(body, "relativeDeg", value)) {
-    long target = stepper.currentPosition() + lround(value * settings.stepsPerDegree);
+    long target = physicalToLogicalSteps(stepper.currentPosition()) + lround(value * settings.stepsPerDegree);
     if (target >= settings.maxSteps) {
       target -= 360L * settings.stepsPerDegree;
     }
     if (target < 0) {
       target += 360L * settings.stepsPerDegree;
     }
-    ok = moveToSteps(target);
+    ok = moveToLogicalSteps(target);
   }
 
   if (!ok) {
@@ -559,9 +631,9 @@ void handleSetPositionApi() {
   String body = server.arg("plain");
   double value;
   if (extractNumber(body, "steps", value)) {
-    stepper.setCurrentPosition(lround(value));
+    setCurrentLogicalPosition(lround(value));
   } else if (extractNumber(body, "angle", value)) {
-    stepper.setCurrentPosition(lround((normalizeAngle(value) + 360.0F) * settings.stepsPerDegree));
+    setCurrentLogicalPosition(lround((normalizeAngle(value) + 360.0F) * settings.stepsPerDegree));
   } else {
     sendJson(400, "{\"error\":\"invalid_position\"}");
     return;
@@ -584,6 +656,7 @@ void handleSettingsPostApi() {
   if (extractNumber(body, "stepsPerDegree", numberValue) && numberValue > 0) {
     settings.stepsPerDegree = (int)numberValue;
     settings.maxSteps = (long)settings.stepsPerDegree * 720L;
+    clampHomeOffset();
   }
   if (extractNumber(body, "maxSpeed", numberValue) && numberValue > 0) {
     settings.maxSpeed = (int)numberValue;
@@ -735,9 +808,8 @@ void serviceHome() {
     findingHome = false;
     homeFound = true;
     stepper.stop();
-    stepper.setCurrentPosition(settings.maxSteps / 2L);
-    positionSaved = true;
-    saveSettings();
+    stepper.setCurrentPosition(mechanicalHomeSteps());
+    moveToPhysicalSteps(zeroPhysicalSteps());
     broadcastStatus();
     return;
   }

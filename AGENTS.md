@@ -47,7 +47,8 @@ Core behavior:
 - Stores settings in EEPROM with `SETTINGS_MAGIC`.
 - Default `stepsPerDegree` is `100`.
 - Default travel range is two turns: `maxSteps = stepsPerDegree * 720`.
-- Logical zero-degree angle is centered at `360 * stepsPerDegree`, matching the original ASCOM offset behavior.
+- Logical zero-degree angle is centered at `360 * stepsPerDegree`, then shifted by the saved user zero offset.
+- The Hall sensor is a mechanical reference. `Set 0` stores `homeOffsetSteps`, and `Home` returns to that saved user zero after finding the Hall sensor.
 - The mobile web page is embedded in `INDEX_HTML` and served from `/`.
 - Status is available as JSON from `GET /api/status`.
 - Movement and settings endpoints are implemented through `/api/move`, `/api/halt`, `/api/home`, `/api/set-position`, and `/api/settings`.
@@ -56,7 +57,7 @@ Legacy text commands terminate with `#`:
 
 - `G#`: current position and moving state
 - `M <steps>#`: move to absolute step position
-- `P <steps>#`: set current step position
+- `P <steps>#`: set current logical step position and update the saved zero offset
 - `H#`: start homing
 - `S#`: stop movement
 - `R <0|1>#`: set direction inversion
@@ -71,7 +72,8 @@ Hardware constraints:
 - Motor and stepper driver motor supply use external 12V power.
 - ESP8266 GND, stepper driver logic GND, and 12V supply negative terminal must share ground.
 - 12V must stay isolated from ESP8266 `5V`, `3.3V`, and GPIO pins.
-- Default wiring is documented in `ESP8266RotatorFirmware/README.md`.
+- Default wiring and NodeMCU-style soldering tables are documented in `README.md`
+  and `ESP8266RotatorFirmware/README.md`.
 
 ## ASCOM Driver Notes
 
@@ -142,7 +144,7 @@ After changing ASCOM driver:
 ## Common Risk Areas
 
 - Step-to-angle conversion uses the two-turn center offset. Check `stepsPerDegree` changes in both firmware and ASCOM driver.
-- Homing sets current position to `maxSteps / 2`, which represents the middle of the two-turn range.
+- Homing sets the mechanical reference to `maxSteps / 2`, then moves to `maxSteps / 2 + homeOffsetSteps`, which represents the saved user zero.
 - WebSocket status uses port `81`; phone browsers connected to the ESP8266 AP must be able to reach that port.
 - TCP command responses must include the trailing `#`, since ASCOM reads until `#`.
 - `D0` / GPIO16 has limited ESP8266 interrupt and pull-up behavior. The current CCW button design assumes an external 10k pull-up.

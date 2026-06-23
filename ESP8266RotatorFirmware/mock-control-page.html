@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ECAA Rotator Mock</title>
+<style>
+:root{color-scheme:dark;--bg:#111318;--panel:#1a1f28;--panel2:#202734;--line:#384252;--text:#f2f5f8;--muted:#aeb8c6;--accent:#4db6ac;--warn:#f4b24e;--danger:#ee6b63;--ok:#7bc96f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;letter-spacing:0}
+main{max-width:720px;margin:0 auto;padding:18px 14px 28px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
+h1{font-size:22px;margin:0;font-weight:680}
+.status{font-size:13px;color:var(--muted)}
+.grid{display:grid;grid-template-columns:1fr;gap:10px}
+section{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:12px}
+.readout{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.metric{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;min-height:76px}
+.metric span{display:block;color:var(--muted);font-size:12px;margin-bottom:8px}
+.metric strong{font-size:26px;line-height:1.1}
+.form{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.wide{grid-column:1/-1}
+button,input{font:inherit}
+button{border:1px solid var(--line);background:#263244;color:var(--text);border-radius:8px;min-height:44px;padding:0 12px;cursor:pointer}
+button:active{transform:translateY(1px)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#071211;font-weight:700}
+button.danger{background:var(--danger);border-color:var(--danger);color:#210706;font-weight:700}
+button.toggle.active{background:var(--ok);border-color:var(--ok);color:#061008;font-weight:700}
+label{display:grid;gap:5px;color:var(--muted);font-size:12px;min-width:0}
+input{width:100%;background:#121720;color:var(--text);border:1px solid var(--line);border-radius:8px;min-height:42px;padding:8px 10px}
+.dial{aspect-ratio:1;max-width:330px;margin:6px auto 12px;border:2px solid var(--line);border-radius:50%;position:relative;background:radial-gradient(circle,#202734 0,#151a22 68%,#111318 100%)}
+.needle{position:absolute;left:50%;top:50%;width:3px;height:43%;background:var(--accent);transform-origin:50% 0;transform:rotate(180deg);border-radius:3px}
+.hub{position:absolute;left:50%;top:50%;width:18px;height:18px;background:var(--accent);border-radius:50%;transform:translate(-50%,-50%)}
+.tick{position:absolute;color:var(--muted);font-size:12px}
+.t0{left:50%;top:8px;transform:translateX(-50%)}.t90{right:8px;top:50%;transform:translateY(-50%)}.t180{left:50%;bottom:8px;transform:translateX(-50%)}.t270{left:8px;top:50%;transform:translateY(-50%)}
+.small{font-size:12px;color:var(--muted)}
+@media (min-width:680px){.grid{grid-template-columns:1fr 1fr}.span{grid-column:1/-1}}
+</style>
+</head>
+<body>
+<main>
+<header>
+<h1>ECAA Rotator</h1>
+<div class="status" id="link">Mock ready</div>
+</header>
+<div class="grid">
+<section class="span">
+<div class="dial">
+<div class="tick t0">0</div><div class="tick t90">90</div><div class="tick t180">180</div><div class="tick t270">270</div>
+<div class="needle" id="needle"></div><div class="hub"></div>
+</div>
+<div class="readout">
+<div class="metric"><span>Angle</span><strong id="angle">0.00 deg</strong></div>
+<div class="metric"><span>Steps</span><strong id="steps">36000</strong></div>
+</div>
+</section>
+<section>
+<div class="form">
+<label class="wide">Absolute angle<input id="absoluteAngle" type="number" min="0" max="359.99" step="0.01" value="0"></label>
+<button class="primary wide" id="moveAbsolute">Move</button>
+<button data-rel="-10">-10</button><button data-rel="-1">-1</button><button data-rel="-0.1">-0.1</button>
+<button data-rel="0.1">+0.1</button><button data-rel="1">+1</button><button data-rel="10">+10</button>
+<button class="danger" id="halt">STOP</button><button id="home">Home</button><button id="setZero">Set 0</button>
+</div>
+</section>
+<section>
+<div class="form">
+<button class="toggle" id="hold">Hold</button>
+<button class="toggle" id="reverse">Reverse</button>
+<label>Steps/degree<input id="stepsPerDegree" type="number" min="1" step="1" value="100"></label>
+<label>Max speed<input id="maxSpeed" type="number" min="1" step="1" value="800"></label>
+<label>Acceleration<input id="acceleration" type="number" min="1" step="1" value="1000"></label>
+<label>Manual step<input id="manualStep" type="number" min="1" step="1" value="50"></label>
+<label>STA SSID<input id="staSsid" type="text" maxlength="31" value="observatory-wifi"></label>
+<label>STA Password<input id="staPassword" type="password" maxlength="63" value=""></label>
+<button class="primary wide" id="saveSettings">Save settings</button>
+<div class="small wide" id="network"></div>
+</div>
+</section>
+</div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const state={
+ firmware:2001,positionSteps:36000,targetSteps:36000,mechanicalSteps:36000,targetMechanicalSteps:36000,
+ homeOffsetSteps:0,zeroPhysicalSteps:36000,angle:0,targetAngle:0,isMoving:false,
+ home:false,hold:false,reversed:false,stepsPerDegree:100,maxSteps:72000,maxSpeed:800,
+ acceleration:1000,manualStep:50,homeStep:100,apSsid:'CAA-Rotator-1a2b3c',
+ apIp:'192.168.4.1',staIp:'0.0.0.0',staSsid:'observatory-wifi',tcpPort:4030
+};
+let motionTimer=0;
+function normalizeAngle(v){v=Number(v)||0;while(v<0)v+=360;while(v>=360)v-=360;return v}
+function mechanicalHomeSteps(){return state.maxSteps/2}
+function zeroPhysicalSteps(){return mechanicalHomeSteps()+state.homeOffsetSteps}
+function physicalToLogicalSteps(physicalSteps){return physicalSteps-state.homeOffsetSteps}
+function logicalToPhysicalSteps(logicalSteps){return logicalSteps+state.homeOffsetSteps}
+function clampHomeOffset(){
+ const center=mechanicalHomeSteps();
+ if(state.homeOffsetSteps<-center)state.homeOffsetSteps=-center;
+ if(state.homeOffsetSteps>center)state.homeOffsetSteps=center;
+}
+function setCurrentLogicalPosition(logicalSteps){state.homeOffsetSteps=state.mechanicalSteps-logicalSteps;clampHomeOffset()}
+function physicalStepIsInRange(physicalSteps){return physicalSteps>=0&&physicalSteps<=state.maxSteps}
+function choosePhysicalTarget(physicalA,physicalB){
+ const validA=physicalStepIsInRange(physicalA);
+ const validB=physicalStepIsInRange(physicalB);
+ if(validA&&validB)return Math.abs(state.mechanicalSteps-physicalA)<=Math.abs(state.mechanicalSteps-physicalB)?physicalA:physicalB;
+ if(validA)return physicalA;
+ return physicalB;
+}
+function angleToPhysicalSteps(angle){
+ const normalized=normalizeAngle(angle);
+ const logicalA=Math.round(normalized*state.stepsPerDegree);
+ const logicalB=Math.round((normalized+360)*state.stepsPerDegree);
+ return choosePhysicalTarget(logicalToPhysicalSteps(logicalA),logicalToPhysicalSteps(logicalB));
+}
+function stepsToAngle(physicalSteps){return normalizeAngle((physicalToLogicalSteps(physicalSteps)-mechanicalHomeSteps())/state.stepsPerDegree)}
+function setState(){
+ state.positionSteps=physicalToLogicalSteps(state.mechanicalSteps);
+ state.targetSteps=physicalToLogicalSteps(state.targetMechanicalSteps);
+ state.zeroPhysicalSteps=zeroPhysicalSteps();
+ state.angle=stepsToAngle(state.mechanicalSteps);
+ state.targetAngle=stepsToAngle(state.targetMechanicalSteps);
+ $('angle').textContent=state.angle.toFixed(2)+' deg';
+ $('steps').textContent=String(state.positionSteps);
+ $('needle').style.transform='rotate('+(state.angle+180)+'deg)';
+ $('link').textContent=state.isMoving?'Mock moving':'Mock ready';
+ $('hold').classList.toggle('active',state.hold);
+ $('reverse').classList.toggle('active',state.reversed);
+ $('stepsPerDegree').value=state.stepsPerDegree;
+ $('maxSpeed').value=state.maxSpeed;
+ $('acceleration').value=state.acceleration;
+ $('manualStep').value=state.manualStep;
+ $('staSsid').value=state.staSsid;
+ const staIp=state.staIp&&state.staIp!=='0.0.0.0'?state.staIp:'not connected';
+ $('network').textContent='AP: '+state.apIp+' | STA: '+staIp+' | TCP: '+state.tcpPort;
+}
+function simulateMove(targetSteps){
+ clearInterval(motionTimer);
+ state.targetMechanicalSteps=targetSteps;
+ state.isMoving=true;
+ motionTimer=setInterval(()=>{
+  const delta=state.targetMechanicalSteps-state.mechanicalSteps;
+  if(Math.abs(delta)<=20){state.mechanicalSteps=state.targetMechanicalSteps;state.isMoving=false;clearInterval(motionTimer);}
+  else{state.mechanicalSteps+=Math.sign(delta)*Math.min(Math.abs(delta),Math.max(20,state.stepsPerDegree/5));}
+  setState();
+ },80);
+ setState();
+}
+$('moveAbsolute').onclick=()=>simulateMove(angleToPhysicalSteps($('absoluteAngle').value));
+document.querySelectorAll('[data-rel]').forEach(b=>b.onclick=()=>{
+ const logicalTarget=physicalToLogicalSteps(state.mechanicalSteps)+Math.round(Number(b.dataset.rel)*state.stepsPerDegree);
+ simulateMove(logicalToPhysicalSteps(logicalTarget));
+});
+$('halt').onclick=()=>{clearInterval(motionTimer);state.targetMechanicalSteps=state.mechanicalSteps;state.isMoving=false;setState();};
+$('home').onclick=()=>{state.mechanicalSteps=mechanicalHomeSteps();simulateMove(zeroPhysicalSteps());};
+$('setZero').onclick=()=>{setCurrentLogicalPosition(360*state.stepsPerDegree);state.targetMechanicalSteps=state.mechanicalSteps;setState();};
+$('hold').onclick=()=>{state.hold=!state.hold;setState();};
+$('reverse').onclick=()=>{state.reversed=!state.reversed;setState();};
+$('saveSettings').onclick=()=>{
+ state.stepsPerDegree=Number($('stepsPerDegree').value)||100;
+ state.maxSteps=state.stepsPerDegree*720;
+ clampHomeOffset();
+ state.maxSpeed=Number($('maxSpeed').value)||800;
+ state.acceleration=Number($('acceleration').value)||1000;
+ state.manualStep=Number($('manualStep').value)||50;
+ state.staSsid=$('staSsid').value.trim();
+ setState();
+};
+setState();
+</script>
+</body>
+</html>

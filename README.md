@@ -17,7 +17,8 @@ astronomy software, a simple ASCOM test client, and mechanical reference assets.
 ## Repository Layout
 
 - `ESP8266RotatorFirmware/`
-  - Main ESP8266 firmware and firmware-specific README.
+  - Main ESP8266 firmware, firmware-specific README, and a browser-only mock
+    control page.
 - `ArduinoRotatorFirmware_ver1008/`
   - Original Arduino Nano firmware.
 - `driver/scopefocusRotatorDriver/`
@@ -53,6 +54,38 @@ Default wiring:
 - CW: D7 / GPIO13, active low
 - CCW: D0 / GPIO16, active low with an external 10k pull-up to 3.3V
 
+Soldering guide for the photographed NodeMCU-style board:
+
+- Orient the board with the USB connector at the bottom and the ESP8266 antenna
+  at the top. Use the printed pin labels on the board as the reference.
+- The required signal pads are on the right-side header in the photo:
+  `D0`, `D1`, `D2`, `D5`, `D6`, `D7`, `GND`, and `3V3`.
+- Solder pin headers first if the rotator will be serviced later. Direct wire
+  soldering is acceptable for a permanent build; add strain relief near the
+  board edge.
+
+| Board pad | Connect to | Notes |
+| --- | --- | --- |
+| `D1` / GPIO5 | Stepper driver `STEP`, `PUL`, or `CLK` | 3.3V logic pulse output. |
+| `D2` / GPIO4 | Stepper driver `DIR` | Direction output. Reverse in firmware or web UI if rotation is inverted. |
+| `D5` / GPIO14 | Stepper driver `ENABLE` or `ENA` | Active low. The firmware pulls it low when the driver should be enabled. |
+| `D6` / GPIO12 | Hall sensor output | Active low. Sensor output must stay at 3.3V or lower. |
+| `D7` / GPIO13 | CW manual button | Wire the other side of the button to `GND`. |
+| `D0` / GPIO16 | CCW manual button | Wire the other side of the button to `GND`; add a 10k pull-up from `D0` to `3V3`. |
+| `3V3` | Hall sensor VCC, or driver logic VDD when supported | Use only for low-current 3.3V logic or sensors. |
+| `GND` | Stepper driver logic GND, Hall GND, button common, and 12V supply negative | Common ground is required for STEP/DIR/ENABLE to be valid. |
+| USB or `Vin` | ESP8266 board power | Prefer USB during testing. If using a buck converter, feed regulated 5V to `Vin` and `GND`. |
+
+External stepper driver wiring:
+
+| Driver terminal | Connect to | Notes |
+| --- | --- | --- |
+| `VMOT`, `12V+`, or motor supply `+` | External 12V positive | Set the driver current limit before load testing. |
+| Motor supply `GND` | External 12V negative and ESP8266 `GND` | This is the shared power return. |
+| `A+`, `A-`, `B+`, `B-` | Stepper motor coils | Swap one coil pair if the physical direction is unsuitable. |
+| `VDD` or `VIO` | `3V3` only when the driver supports 3.3V logic | Use a level shifter or compatible driver for 5V-only logic inputs. |
+| Microstep pins | Fixed high/low jumpers as required | Update `stepsPerDegree` after changing microstepping. |
+
 Power requirements:
 
 - Use an external 12V supply for the stepper driver motor power.
@@ -61,6 +94,25 @@ Power requirements:
 - Keep 12V away from ESP8266 `5V`, `3.3V`, and GPIO pins.
 - ESP8266 GPIO uses 3.3V logic. Use level shifting or a 3.3V-compatible stepper
   driver when required.
+
+Initial electrical check:
+
+1. Power only the ESP8266 over USB and confirm the AP appears.
+2. Wire `GND`, `STEP`, `DIR`, and `ENABLE` to the stepper driver with motor
+   power disconnected.
+3. Verify `ENABLE` changes state and `STEP` pulses during a small move command.
+4. Connect the Hall sensor and confirm `Home` reacts when the sensor is
+   triggered.
+5. Connect the external 12V supply and motor after the driver current limit is
+   set.
+
+Home and zero behavior:
+
+- The Hall sensor is only the mechanical reference point.
+- `Set 0` stores the current physical position as the user-defined zero angle.
+- The saved zero offset is persistent.
+- `Home` finds the Hall sensor first, then automatically returns to the saved
+  user-defined `0 deg` position.
 
 ## Firmware Build
 
@@ -74,6 +126,12 @@ Open and upload:
 
 ```text
 ESP8266RotatorFirmware/ESP8266RotatorFirmware.ino
+```
+
+Preview the mobile control page locally:
+
+```text
+ESP8266RotatorFirmware/mock-control-page.html
 ```
 
 After upload:
@@ -118,7 +176,7 @@ Commands are ASCII text terminated by `#`.
 
 - `G#`: returns `P <steps>;M <true|false>#`
 - `M <steps>#`: move to absolute step position
-- `P <steps>#`: set current step position
+- `P <steps>#`: set current logical step position and update the saved zero offset
 - `H#`: start homing
 - `S#`: stop movement
 - `R <0|1>#`: set direction inversion

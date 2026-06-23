@@ -13,11 +13,21 @@ namespace ASCOM.scopefocus
     [ComVisible(false)]					// Form not registered for COM!
     public partial class SetupDialogForm : Form
     {
+        private static readonly Color BackgroundColor = Color.FromArgb(17, 19, 24);
+        private static readonly Color PanelAltColor = Color.FromArgb(32, 39, 52);
+        private static readonly Color LineColor = Color.FromArgb(56, 66, 82);
+        private static readonly Color FieldColor = Color.FromArgb(18, 23, 32);
+        private static readonly Color TextColor = Color.FromArgb(242, 245, 248);
+        private static readonly Color MutedColor = Color.FromArgb(174, 184, 198);
+        private static readonly Color AccentColor = Color.FromArgb(77, 182, 172);
+        private static readonly Color AccentTextColor = Color.FromArgb(7, 18, 17);
+
         public SetupDialogForm()
         {
             InitializeComponent();
             // Initialise current values of user settings from the ASCOM Profile
             InitUI();
+            ApplyTheme();
         }
 
         private void cmdOK_Click(object sender, EventArgs e) // OK button event handler
@@ -189,6 +199,7 @@ namespace ASCOM.scopefocus
 
             //  label2.Enabled = enable;
             textBox1.Enabled = enable;
+            RefreshConnectionFieldTheme();
             checkTextBox();
         }
 
@@ -229,6 +240,91 @@ namespace ASCOM.scopefocus
             comboBoxComPort.Enabled = serialSelected;
             textBoxTcpHost.Enabled = !serialSelected;
             textBoxTcpPort.Enabled = !serialSelected;
+            RefreshConnectionFieldTheme();
+        }
+
+        private void ApplyTheme()
+        {
+            BackColor = BackgroundColor;
+            ForeColor = TextColor;
+            Font = new Font("Segoe UI", Font.Size, Font.Style, GraphicsUnit.Point);
+
+            ApplyTheme(Controls);
+
+            label1.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
+            label1.ForeColor = TextColor;
+            picASCOM.BackColor = BackgroundColor;
+            StyleButton(cmdOK, AccentColor, AccentTextColor);
+            StyleButton(cmdCancel, PanelAltColor, TextColor);
+            RefreshConnectionFieldTheme();
+        }
+
+        private void ApplyTheme(Control.ControlCollection controls)
+        {
+            foreach (Control control in controls)
+            {
+                Label label = control as Label;
+                if (label != null)
+                {
+                    label.ForeColor = MutedColor;
+                    label.BackColor = Color.Transparent;
+                }
+
+                TextBox textBox = control as TextBox;
+                if (textBox != null)
+                {
+                    StyleInput(textBox);
+                    textBox.BorderStyle = BorderStyle.FixedSingle;
+                }
+
+                ComboBox comboBox = control as ComboBox;
+                if (comboBox != null)
+                {
+                    StyleInput(comboBox);
+                    comboBox.FlatStyle = FlatStyle.Flat;
+                }
+
+                CheckBox checkBox = control as CheckBox;
+                if (checkBox != null)
+                {
+                    checkBox.ForeColor = MutedColor;
+                    checkBox.BackColor = BackgroundColor;
+                    checkBox.FlatStyle = FlatStyle.Flat;
+                    checkBox.FlatAppearance.BorderColor = LineColor;
+                    checkBox.FlatAppearance.CheckedBackColor = AccentColor;
+                }
+
+                if (control.HasChildren)
+                {
+                    ApplyTheme(control.Controls);
+                }
+            }
+        }
+
+        private void RefreshConnectionFieldTheme()
+        {
+            StyleInput(comboBoxComPort);
+            StyleInput(textBoxTcpHost);
+            StyleInput(textBoxTcpPort);
+            StyleInput(textBoxTimeout);
+            StyleInput(textBox1);
+            StyleInput(textBox2);
+        }
+
+        private void StyleInput(Control control)
+        {
+            control.BackColor = control.Enabled ? FieldColor : PanelAltColor;
+            control.ForeColor = control.Enabled ? TextColor : MutedColor;
+        }
+
+        private void StyleButton(Button button, Color backColor, Color foreColor)
+        {
+            button.FlatStyle = FlatStyle.Flat;
+            button.FlatAppearance.BorderColor = LineColor;
+            button.FlatAppearance.BorderSize = 1;
+            button.BackColor = backColor;
+            button.ForeColor = foreColor;
+            button.UseVisualStyleBackColor = false;
         }
     }
 }
