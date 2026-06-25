@@ -11,7 +11,7 @@
 #define ENABLE_PIN D5
 #define HALL_PIN D6
 #define CW_PIN D7
-#define CCW_PIN D0
+#define CCW_PIN D3
 
 #define DEVICE_RESPONSE "CAA ESP8266 Rotator ver 2001"
 #define FIRMWARE_VERSION 2001
@@ -85,7 +85,7 @@ section{border:1px solid var(--line);background:var(--panel);border-radius:8px;p
 .readout{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .metric{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;min-height:76px}
 .metric span{display:block;color:var(--muted);font-size:12px;margin-bottom:8px}
-.metric strong{font-size:26px;line-height:1.1}
+.metric strong{font-size:22px;line-height:1.2;white-space:nowrap}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .controls{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 button,input,select{font:inherit}
@@ -161,7 +161,7 @@ async function api(path,body){
 }
 function setState(s){
  state=s;
- $('angle').textContent=(s.angle??0).toFixed(2)+' deg';
+ $('angle').textContent=(s.angle??0).toFixed(2)+'°';
  $('steps').textContent=String(s.positionSteps??0);
  $('needle').style.transform='rotate('+((s.angle??0)+180)+'deg)';
  $('link').textContent=s.isMoving?'Moving':'Ready';
@@ -422,7 +422,8 @@ String statusJson() {
 }
 
 void broadcastStatus() {
-  webSocket.broadcastTXT(statusJson());
+  String json = statusJson();
+  webSocket.broadcastTXT(json);
 }
 
 long commandParameter(String command) {
@@ -621,8 +622,7 @@ void handleHaltApi() {
 }
 
 void handleHomeApi() {
-  findingHome = true;
-  homeFound = false;
+  moveToPhysicalSteps(zeroPhysicalSteps());
   broadcastStatus();
   sendJson(200, statusJson());
 }
@@ -787,11 +787,15 @@ void updateManualButton(int pin, int &lastState, bool &manualFlag, unsigned long
     lastState = reading;
   }
   if ((millis() - lastDebounce) > debounceDelayMs) {
-    manualFlag = reading == LOW;
-  }
-  if (manualFlag && !findingHome) {
-    stepper.move(direction * settings.manualMoveStepSize);
-    positionSaved = false;
+    if (reading == LOW && !manualFlag) {
+      manualFlag = true;
+      if (!findingHome) {
+        stepper.move(direction * settings.manualMoveStepSize);
+        positionSaved = false;
+      }
+    } else if (reading == HIGH) {
+      manualFlag = false;
+    }
   }
 }
 
@@ -839,7 +843,8 @@ void setup() {
   webSocket.begin();
   webSocket.onEvent([](uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
     if (type == WStype_CONNECTED) {
-      webSocket.sendTXT(num, statusJson());
+      String json = statusJson();
+      webSocket.sendTXT(num, json);
     }
   });
 
