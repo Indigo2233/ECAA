@@ -443,7 +443,7 @@ bool CaaRotator::initProperties()
 
     // --- Max speed ---
     MaxSpeedNP[0].fill("SPD", "Max Speed", "%.0f",
-                        1.0, 3000.0, 10.0, DEFAULT_MAX_SPEED);
+                        1.0, 100000.0, 10.0, DEFAULT_MAX_SPEED);
     MaxSpeedNP.fill(getDeviceName(), "MAX_SPEED", "Max Speed (steps/s)");
     MaxSpeedNP.defineProperty();
 
@@ -674,6 +674,9 @@ bool CaaRotator::ISNewNumber(const char *dev, const char *name,
         {
             MaxSpeedNP.update(values, names, n);
             maxSpeed = (int)MaxSpeedNP[0].getValue();
+            int speedLimit = (int)(stepsPerDegree * 10.0);
+            if (maxSpeed > speedLimit) maxSpeed = speedLimit;
+            if (maxSpeed < 1) maxSpeed = 1;
             if (isConnected() && connection && connection->isOpen())
             {
                 std::string resp;

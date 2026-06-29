@@ -747,7 +747,7 @@ namespace ASCOM.scopefocus
             {
                 CheckConnected("MaxSpeed");
                 if (value <= 0) return;
-                if (value > 3000) value = 3000;
+                if (value > stepsPerDegree * 10) value = stepsPerDegree * 10;
                 maxSpeed = value;
                 CommandString("X " + value.ToString() + "#", false);
                 tl.LogMessage("MaxSpeed Set", value.ToString());
