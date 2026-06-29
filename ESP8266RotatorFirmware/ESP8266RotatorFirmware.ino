@@ -139,7 +139,7 @@ input{width:100%;background:#121720;color:var(--text);border:1px solid var(--lin
 <button class="toggle" id="hold">Hold</button>
 <button class="toggle" id="reverse">Reverse</button>
 <label>Steps/degree<input id="stepsPerDegree" type="number" min="1" step="1"></label>
-<label>Max speed<input id="maxSpeed" type="number" min="1" step="1"></label>
+<label>Max speed<input id="maxSpeed" type="number" min="1" max="3000" step="1"></label>
 <label>Acceleration<input id="acceleration" type="number" min="1" step="1"></label>
 <label>Manual step<input id="manualStep" type="number" min="1" step="1"></label>
 <label>STA SSID<input id="staSsid" type="text" maxlength="31"></label>
@@ -520,6 +520,7 @@ String processCommand(String command) {
       if (paramStr.length() > 0) {
         int val = paramStr.toInt();
         if (val > 0) {
+          if (val > 3000) val = 3000;
           settings.maxSpeed = val;
           applyMotionSettings();
           saveSettings();
@@ -687,7 +688,9 @@ void handleSettingsPostApi() {
     clampHomeOffset();
   }
   if (extractNumber(body, "maxSpeed", numberValue) && numberValue > 0) {
-    settings.maxSpeed = (int)numberValue;
+    int spd = (int)numberValue;
+    if (spd > 3000) spd = 3000;
+    settings.maxSpeed = spd;
   }
   if (extractNumber(body, "acceleration", numberValue) && numberValue > 0) {
     settings.acceleration = (int)numberValue;

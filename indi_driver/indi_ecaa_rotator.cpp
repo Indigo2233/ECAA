@@ -443,7 +443,7 @@ bool CaaRotator::initProperties()
 
     // --- Max speed ---
     MaxSpeedNP[0].fill("SPD", "Max Speed", "%.0f",
-                        1.0, 50000.0, 10.0, DEFAULT_MAX_SPEED);
+                        1.0, 3000.0, 10.0, DEFAULT_MAX_SPEED);
     MaxSpeedNP.fill(getDeviceName(), "MAX_SPEED", "Max Speed (steps/s)");
     MaxSpeedNP.defineProperty();
 
