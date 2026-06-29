@@ -133,6 +133,7 @@ private:
     INDI::PropertyNumber SerialBaudNP{1};       // 9600
     INDI::PropertyNumber StepsPerDegreeNP{1};
     INDI::PropertyNumber CommandTimeoutNP{1};
+    INDI::PropertySwitch ReverseSP{1};          // direction reverse
     INDI::PropertyText   FirmwareVersionTP{1};
     INDI::PropertyNumber SyncAngleNP{1};
 
@@ -150,5 +151,6 @@ private:
     double      stepsPerDegree;
     long        currentLogicalSteps;
     bool        moving;
+    bool        reversed;
     std::string firmwareVersion;
 };

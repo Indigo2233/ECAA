@@ -389,6 +389,7 @@ CaaRotator::CaaRotator()
     , stepsPerDegree(DEFAULT_STEPS_PER_DEGREE)
     , currentLogicalSteps(0)
     , moving(false)
+    , reversed(false)
 {
     setVersion(1, 0);
     setDriverInterface(ROTATOR_INTERFACE);
@@ -447,6 +448,11 @@ bool CaaRotator::initProperties()
     FirmwareVersionTP.fill(getDeviceName(), "FW_VERSION", "Firmware");
     FirmwareVersionTP.defineProperty();
 
+    // --- Reverse ---
+    ReverseSP[0].fill("REV", "Reverse", ISS_OFF);
+    ReverseSP.fill(getDeviceName(), "REVERSE", "Direction");
+    ReverseSP.defineProperty();
+
     // --- Sync trigger ---
     SyncAngleNP[0].fill("SYNC_ANGLE", "Angle (°)", "%.3f",
                         0.0, 360.0, 0.01, 0.0);
@@ -494,12 +500,14 @@ bool CaaRotator::updateProperties()
     {
         FirmwareVersionTP.defineProperty();
         SyncAngleNP.defineProperty();
+        ReverseSP.defineProperty();
         SetTimer(getCurrentPollingPeriod());
     }
     else
     {
         FirmwareVersionTP.deleteProperty();
         SyncAngleNP.deleteProperty();
+        ReverseSP.deleteProperty();
     }
     return true;
 }
@@ -544,6 +552,22 @@ bool CaaRotator::ISNewSwitch(const char *dev, const char *name,
             saveConfig(true, "TRANSPORT");
 
             LOGF_INFO("Transport: %s", (transport == TRANSPORT_TCP) ? "TCP" : "Serial");
+            return true;
+        }
+
+        if (ReverseSP.isNameMatch(name))
+        {
+            ReverseSP.update(states, names, n);
+            reversed = (ReverseSP[0].getState() == ISS_ON);
+            if (isConnected() && connection && connection->isOpen())
+            {
+                std::string resp;
+                sendCmd(reversed ? "R 1" : "R 0");
+                readResp(resp);
+            }
+            ReverseSP.setState(IPS_OK);
+            ReverseSP.apply();
+            LOGF_INFO("Reverse: %s", reversed ? "ON" : "OFF");
             return true;
         }
     }
@@ -738,6 +762,18 @@ bool CaaRotator::Handshake()
     FirmwareVersionTP.setState(IPS_OK);
     FirmwareVersionTP.apply();
     LOGF_INFO("Firmware: %s", firmwareVersion.c_str());
+
+    // I#  — read reversed state from JSON status
+    sendCmd("I");
+    if (readResp(resp))
+    {
+        resp.erase(std::remove(resp.begin(), resp.end(), '#'), resp.end());
+        reversed = (resp.find("\"reversed\":true") != std::string::npos);
+        ReverseSP[0].setState(reversed ? ISS_ON : ISS_OFF);
+        ReverseSP.setState(IPS_OK);
+        ReverseSP.apply();
+        LOGF_INFO("Reverse: %s", reversed ? "ON" : "OFF");
+    }
 
     // D <spd>#  — sync steps-per-degree (truncated to int for firmware)
     int spdInt = (int)stepsPerDegree;

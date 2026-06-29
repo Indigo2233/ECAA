@@ -74,6 +74,7 @@ namespace ASCOM.scopefocus
         //    double lastTemp = 0;
         bool lastMoving = false;
         bool lastLink = false;
+        bool isReversed = false;
 
         long UPDATETICKS = (long)(1 * 10000000.0); // 10,000,000 ticks in 1 second
         long lastUpdate = 0;
@@ -353,6 +354,19 @@ namespace ASCOM.scopefocus
                             string verTrim = ver.Replace('#', ' ');
                             string versn = verTrim.Replace('V', ' ').Trim();
                             tl.LogMessage("Firmware Version: ", versn.ToString());
+
+                            // Read reversed direction state from firmware
+                            try
+                            {
+                                string jsonStatus = CommandString("I#", false);
+                                string jsonTrim = jsonStatus.Replace('#', ' ').Trim();
+                                isReversed = jsonTrim.Contains("\"reversed\":true");
+                                tl.LogMessage("Reverse state: ", isReversed.ToString());
+                            }
+                            catch
+                            {
+                                isReversed = false;
+                            }
                         }
                         catch (Exception ex)
                         {
@@ -464,8 +478,8 @@ namespace ASCOM.scopefocus
         {
             get
             {
-                tl.LogMessage("CanReverse Get", false.ToString());
-                return false;
+                tl.LogMessage("CanReverse Get", true.ToString());
+                return true;
             }
         }
 
@@ -697,13 +711,16 @@ namespace ASCOM.scopefocus
         {
             get
             {
-                tl.LogMessage("Reverse Get", "Not implemented");
-                throw new ASCOM.PropertyNotImplementedException("Reverse", false);
+                tl.LogMessage("Reverse Get", isReversed.ToString());
+                return isReversed;
             }
             set
             {
-                tl.LogMessage("Reverse Set", "Not implemented");
-                throw new ASCOM.PropertyNotImplementedException("Reverse", true);
+                CheckConnected("Reverse");
+                string cmd = value ? "R 1#" : "R 0#";
+                CommandString(cmd, false);
+                isReversed = value;
+                tl.LogMessage("Reverse Set", value.ToString());
             }
         }
 
