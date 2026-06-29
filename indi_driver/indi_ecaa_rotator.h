@@ -132,6 +132,8 @@ private:
     INDI::PropertyText   SerialPortTP{1};       // /dev/ttyUSB0
     INDI::PropertyNumber SerialBaudNP{1};       // 9600
     INDI::PropertyNumber StepsPerDegreeNP{1};
+    INDI::PropertyNumber MaxSpeedNP{1};
+    INDI::PropertyNumber AccelerationNP{1};
     INDI::PropertyNumber CommandTimeoutNP{1};
     INDI::PropertySwitch ReverseSP{1};          // direction reverse
     INDI::PropertyText   FirmwareVersionTP{1};
@@ -149,6 +151,8 @@ private:
     int         serialBaud;
     int         commandTimeoutMs;
     double      stepsPerDegree;
+    int         maxSpeed;
+    int         acceleration;
     long        currentLogicalSteps;
     bool        moving;
     bool        reversed;

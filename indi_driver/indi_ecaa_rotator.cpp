@@ -376,6 +376,8 @@ constexpr const char *DEFAULT_SERIAL_PORT = "/dev/ttyUSB0";
 constexpr int  DEFAULT_SERIAL_BAUD       = 9600;
 constexpr int  DEFAULT_TIMEOUT_MS        = 3000;
 constexpr int  DEFAULT_STEPS_PER_DEGREE  = 635;
+constexpr int  DEFAULT_MAX_SPEED         = 800;
+constexpr int  DEFAULT_ACCELERATION      = 1000;
 constexpr int  POLL_MS                   = 500;
 
 // ---------------------------------------------------------------------------
@@ -387,6 +389,8 @@ CaaRotator::CaaRotator()
     , serialBaud(DEFAULT_SERIAL_BAUD)
     , commandTimeoutMs(DEFAULT_TIMEOUT_MS)
     , stepsPerDegree(DEFAULT_STEPS_PER_DEGREE)
+    , maxSpeed(DEFAULT_MAX_SPEED)
+    , acceleration(DEFAULT_ACCELERATION)
     , currentLogicalSteps(0)
     , moving(false)
     , reversed(false)
@@ -437,6 +441,18 @@ bool CaaRotator::initProperties()
     StepsPerDegreeNP.fill(getDeviceName(), "STEPS_PER_DEGREE", "Steps per Degree");
     StepsPerDegreeNP.defineProperty();
 
+    // --- Max speed ---
+    MaxSpeedNP[0].fill("SPD", "Max Speed", "%.0f",
+                        1.0, 50000.0, 10.0, DEFAULT_MAX_SPEED);
+    MaxSpeedNP.fill(getDeviceName(), "MAX_SPEED", "Max Speed (steps/s)");
+    MaxSpeedNP.defineProperty();
+
+    // --- Acceleration ---
+    AccelerationNP[0].fill("ACC", "Acceleration", "%.0f",
+                           1.0, 100000.0, 10.0, DEFAULT_ACCELERATION);
+    AccelerationNP.fill(getDeviceName(), "ACCELERATION", "Accel (steps/s²)");
+    AccelerationNP.defineProperty();
+
     // --- Command timeout ---
     CommandTimeoutNP[0].fill("TIMEOUT", "Timeout (ms)", "%.0f",
                              500.0, 30000.0, 100.0, DEFAULT_TIMEOUT_MS);
@@ -466,6 +482,8 @@ bool CaaRotator::initProperties()
     loadConfig(true, "SERIAL_PORT");
     loadConfig(true, "SERIAL_BAUD");
     loadConfig(true, "STEPS_PER_DEGREE");
+    loadConfig(true, "MAX_SPEED");
+    loadConfig(true, "ACCELERATION");
     loadConfig(true, "CMD_TIMEOUT");
 
     // Determine which transport is active from saved state
@@ -501,6 +519,8 @@ bool CaaRotator::updateProperties()
         FirmwareVersionTP.defineProperty();
         SyncAngleNP.defineProperty();
         ReverseSP.defineProperty();
+        MaxSpeedNP.defineProperty();
+        AccelerationNP.defineProperty();
         SetTimer(getCurrentPollingPeriod());
     }
     else
@@ -508,6 +528,8 @@ bool CaaRotator::updateProperties()
         FirmwareVersionTP.deleteProperty();
         SyncAngleNP.deleteProperty();
         ReverseSP.deleteProperty();
+        MaxSpeedNP.deleteProperty();
+        AccelerationNP.deleteProperty();
     }
     return true;
 }
@@ -648,6 +670,40 @@ bool CaaRotator::ISNewNumber(const char *dev, const char *name,
             return true;
         }
 
+        if (MaxSpeedNP.isNameMatch(name))
+        {
+            MaxSpeedNP.update(values, names, n);
+            maxSpeed = (int)MaxSpeedNP[0].getValue();
+            if (isConnected() && connection && connection->isOpen())
+            {
+                std::string resp;
+                sendCmd("X " + std::to_string(maxSpeed));
+                readResp(resp);
+            }
+            MaxSpeedNP.setState(IPS_OK);
+            MaxSpeedNP.apply();
+            saveConfig(true, "MAX_SPEED");
+            LOGF_INFO("Max speed: %d", maxSpeed);
+            return true;
+        }
+
+        if (AccelerationNP.isNameMatch(name))
+        {
+            AccelerationNP.update(values, names, n);
+            acceleration = (int)AccelerationNP[0].getValue();
+            if (isConnected() && connection && connection->isOpen())
+            {
+                std::string resp;
+                sendCmd("A " + std::to_string(acceleration));
+                readResp(resp);
+            }
+            AccelerationNP.setState(IPS_OK);
+            AccelerationNP.apply();
+            saveConfig(true, "ACCELERATION");
+            LOGF_INFO("Acceleration: %d", acceleration);
+            return true;
+        }
+
         if (CommandTimeoutNP.isNameMatch(name))
         {
             CommandTimeoutNP.update(values, names, n);
@@ -780,6 +836,14 @@ bool CaaRotator::Handshake()
     sendCmd("D " + std::to_string(spdInt));
     readResp(resp);
 
+    // X <n>#  — sync max speed
+    sendCmd("X " + std::to_string(maxSpeed));
+    readResp(resp);
+
+    // A <n>#  — sync acceleration
+    sendCmd("A " + std::to_string(acceleration));
+    readResp(resp);
+
     // G#  — initial state
     if (!refreshStatus())
     {
@@ -839,10 +903,14 @@ void CaaRotator::TimerHit()
             SetTimer(getCurrentPollingPeriod());
             return;
         }
-        // Re-send D command after reconnect
+        // Re-send config commands after reconnect
         int spdInt = (int)stepsPerDegree;
         std::string resp;
         sendCmd("D " + std::to_string(spdInt));
+        readResp(resp);
+        sendCmd("X " + std::to_string(maxSpeed));
+        readResp(resp);
+        sendCmd("A " + std::to_string(acceleration));
         readResp(resp);
     }
 

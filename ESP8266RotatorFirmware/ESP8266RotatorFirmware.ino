@@ -500,6 +500,34 @@ String processCommand(String command) {
       saveSettings();
       broadcastStatus();
       return String("D ") + settings.stepsPerDegree + "#";
+    case 'A': {
+      String paramStr = command.substring(1);
+      paramStr.trim();
+      if (paramStr.length() > 0) {
+        int val = paramStr.toInt();
+        if (val > 0) {
+          settings.acceleration = val;
+          applyMotionSettings();
+          saveSettings();
+          broadcastStatus();
+        }
+      }
+      return String("acceleration = ") + settings.acceleration + "#";
+    }
+    case 'X': {
+      String paramStr = command.substring(1);
+      paramStr.trim();
+      if (paramStr.length() > 0) {
+        int val = paramStr.toInt();
+        if (val > 0) {
+          settings.maxSpeed = val;
+          applyMotionSettings();
+          saveSettings();
+          broadcastStatus();
+        }
+      }
+      return String("maxSpeed = ") + settings.maxSpeed + "#";
+    }
     default:
       return String("ERR:") + code + "#";
   }

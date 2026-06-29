@@ -118,6 +118,8 @@ namespace ASCOM.scopefocus
         internal static int commandTimeoutMs;
         internal static bool traceState;
         internal static int stepsPerDegree;
+        internal static int maxSpeed;
+        internal static int acceleration;
 
         /// <summary>
         /// Private variable to hold the connected state
@@ -328,7 +330,11 @@ namespace ASCOM.scopefocus
                         if (setPos)
                             posValue = System.Convert.ToSingle(GetProfileValue(p, "Pos", "0"));
                         stepsPerDegree = ParseInt(GetProfileValue(p, "StepsPerDegree", "100"), 100);
+                        maxSpeed = ParseInt(GetProfileValue(p, "MaxSpeed", "800"), 800);
+                        acceleration = ParseInt(GetProfileValue(p, "Acceleration", "1000"), 1000);
                         tl.LogMessage("Steps per degree:", stepsPerDegree.ToString());
+                        tl.LogMessage("MaxSpeed:", maxSpeed.ToString());
+                        tl.LogMessage("Acceleration:", acceleration.ToString());
                         tl.LogMessage("stepSize", StepSize.ToString());
 
                         try
@@ -344,6 +350,9 @@ namespace ASCOM.scopefocus
 
                             if (IsTcpTransport())
                                 CommandString("D " + stepsPerDegree.ToString() + "#", false);
+
+                            CommandString("A " + acceleration.ToString() + "#", false);
+                            CommandString("X " + maxSpeed.ToString() + "#", false);
 
                             if (contHold)
                                 CommandString("C 1#", false); //continuous hold on
@@ -721,6 +730,46 @@ namespace ASCOM.scopefocus
                 CommandString(cmd, false);
                 isReversed = value;
                 tl.LogMessage("Reverse Set", value.ToString());
+            }
+        }
+
+        /// <summary>
+        /// Motor max speed in steps per second (firmware setting).
+        /// </summary>
+        public int MaxSpeed
+        {
+            get
+            {
+                tl.LogMessage("MaxSpeed Get", maxSpeed.ToString());
+                return maxSpeed;
+            }
+            set
+            {
+                CheckConnected("MaxSpeed");
+                if (value <= 0) return;
+                maxSpeed = value;
+                CommandString("X " + value.ToString() + "#", false);
+                tl.LogMessage("MaxSpeed Set", value.ToString());
+            }
+        }
+
+        /// <summary>
+        /// Motor acceleration in steps per second² (firmware setting).
+        /// </summary>
+        public int Acceleration
+        {
+            get
+            {
+                tl.LogMessage("Acceleration Get", acceleration.ToString());
+                return acceleration;
+            }
+            set
+            {
+                CheckConnected("Acceleration");
+                if (value <= 0) return;
+                acceleration = value;
+                CommandString("A " + value.ToString() + "#", false);
+                tl.LogMessage("Acceleration Set", value.ToString());
             }
         }
 
