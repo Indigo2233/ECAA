@@ -642,6 +642,24 @@ namespace ASCOM.scopefocus
             //rotatorPosition = Position * stepsPerDegree;
             //rotatorPosition = (float)astroUtilities.Range(rotatorPosition, 0.0, true, 360.0, false); // Ensure value is in the range 0.0..359.9999...
         }
+
+        /// <summary>
+        /// Sync the rotator's current mechanical position to the given sky angle.
+        /// Called by NINA after plate-solving to align the rotator's reported position
+        /// with the measured camera angle.
+        /// </summary>
+        /// <param name="position">Sky angle in degrees (0..360).</param>
+        public void Sync(float position)
+        {
+            CheckConnected("Sync");
+            // Convert sky angle to logical steps using the same offset formula as SetPos on connect.
+            // logicalSteps = angle * stepsPerDegree + 360 * stepsPerDegree
+            double logicalSteps = (double)position * stepsPerDegree + 360.0 * stepsPerDegree;
+            CommandString("P " + Math.Round(logicalSteps, 0).ToString() + "#", false);
+            targetPosition = position;
+            tl.LogMessage("Sync", "Synced position to " + position.ToString("F2") + " degrees (" + Math.Round(logicalSteps, 0).ToString() + " logical steps)");
+        }
+
         // this is the stepper motor position in steps.  
         public float StepperPos
         {
