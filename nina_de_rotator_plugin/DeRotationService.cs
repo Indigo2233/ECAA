@@ -120,7 +120,8 @@ namespace AltAzDeRotator
                                 
                                 // Accumulate error over polling cycles so slow
                                 // field rotation rates still get corrected.
-                                _accumulatedError += degreesPerSecond;
+                                // TEST MODE: 10x speed for visible rotation during testing
+                                _accumulatedError += degreesPerSecond * 10;
                                 
                                 double targetAbsolute = (currentRotatorPosition + _accumulatedError) % 360.0;
                                 if (targetAbsolute < 0) targetAbsolute += 360.0;
@@ -128,43 +129,62 @@ namespace AltAzDeRotator
 
                                 Logger.Info($"DEROT: pos={currentRotatorPosition:F4}° accum={_accumulatedError:F4}° target={targetAbsolute:F4}° rate={requiredRateDegreesPerHour:F2}°/hr");
                                 
-                                if (Math.Abs(_accumulatedError) > 0.01) 
+                                // Query stepsPerDegree from ASCOM driver (cache would be better but simple for now)
+                                int stepsPerDegree = 100; // default
+                                try
                                 {
-                                    double applied = _accumulatedError;
+                                    string spd = rotatorDevice.Action("StepsPerDegree", "");
+                                    stepsPerDegree = int.Parse(spd);
+                                }
+                                catch { }
+                                
+                                // Calculate step resolution to determine move threshold
+                                double stepResolution = 1.0 / stepsPerDegree;
+                                
+                                if (Math.Abs(_accumulatedError) >= stepResolution) 
+                                {
+                                    // Calculate current and target steps
+                                    long centerSteps = 200L * stepsPerDegree;
+                                    long currentSteps = (long)Math.Round(currentRotatorPosition * stepsPerDegree) + centerSteps;
+                                    long targetSteps = (long)Math.Round(targetAbsolute * stepsPerDegree) + centerSteps;
+                                    long movedSteps = targetSteps - currentSteps;
                                     
-                                    // Use N command (no-backlash) for smooth field rotation tracking
-                                    // Formula: steps = angle * stepsPerDegree + centerSteps
-                                    // Default: stepsPerDegree=100, centerSteps=20000
-                                    int stepsPerDegree = 100;
-                                    long targetSteps = (long)(targetAbsolute * stepsPerDegree + 200 * stepsPerDegree);
-                                    string cmd = $"N {targetSteps}#";
-                                    
-                                    bool usedNCommand = false;
-                                    try
+                                    // Only move if we have at least 1 step difference
+                                    if (Math.Abs(movedSteps) >= 1)
                                     {
-                                        // Try to send N command via ASCOM CommandString
-                                        string response = rotatorDevice.Action("CommandString", cmd);
-                                        Logger.Info($"DEROT: N cmd sent, target={targetAbsolute:F4}° steps={targetSteps} response={response}");
-                                        usedNCommand = true;
+                                        string cmd = $"N {targetSteps}#";
+                                        
+                                        bool usedNCommand = false;
+                                        try
+                                        {
+                                            // Try to send N command via ASCOM CommandString
+                                            string response = rotatorDevice.Action("CommandString", cmd);
+                                            Logger.Info($"DEROT: N cmd sent, target={targetAbsolute:F4}° steps={targetSteps} moved={movedSteps} response={response}");
+                                            usedNCommand = true;
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            Logger.Debug($"DEROT: N command failed ({ex.Message}), falling back to MoveAbsolute");
+                                        }
+                                        
+                                        if (!usedNCommand)
+                                        {
+                                            Logger.Info($"DEROT: MoveAbsolute to {targetAbsolute:F4}° (applying {_accumulatedError:F4}°)");
+                                            rotatorDevice.MoveAbsolute((float)targetAbsolute, token);
+                                        }
+                                        
+                                        // Calculate actual moved angle from integer steps (no precision loss)
+                                        double actualMoved = (double)movedSteps / stepsPerDegree;
+                                        
+                                        // Brief delay then check actual position
+                                        await Task.Delay(200, token);
+                                        double newPos = rotatorDevice.Position;
+                                        Logger.Info($"DEROT: after move, pos={newPos:F4}° actualMoved={actualMoved:F4}°");
+                                        
+                                        _viewModel.TotalRotationApplied += actualMoved;
+                                        // Only subtract actual moved amount, preserve sub-step residual
+                                        _accumulatedError -= actualMoved;
                                     }
-                                    catch (Exception ex)
-                                    {
-                                        Logger.Debug($"DEROT: N command failed ({ex.Message}), falling back to MoveAbsolute");
-                                    }
-                                    
-                                    if (!usedNCommand)
-                                    {
-                                        Logger.Info($"DEROT: MoveAbsolute to {targetAbsolute:F4}° (applying {applied:F4}°)");
-                                        rotatorDevice.MoveAbsolute((float)targetAbsolute, token);
-                                    }
-                                    
-                                    // Brief delay then check actual position
-                                    await Task.Delay(200, token);
-                                    double newPos = rotatorDevice.Position;
-                                    Logger.Info($"DEROT: after move, pos={newPos:F4}°");
-                                    
-                                    _viewModel.TotalRotationApplied += applied;
-                                    _accumulatedError = 0;
                                 }
                             }
                         }

@@ -229,6 +229,7 @@ namespace ASCOM.scopefocus
                     var sa = new ArrayList();
                     sa.Add("Home");
                     sa.Add("CommandString");
+                    sa.Add("StepsPerDegree");
                     return sa;
 
                 }
@@ -256,6 +257,11 @@ namespace ASCOM.scopefocus
             {
                 // Allow sending raw commands to the device
                 return CommandString(actionParameters, false);
+            }
+            else if (actionName == "StepsPerDegree")
+            {
+                // Return current stepsPerDegree for plugins that need to calculate steps
+                return stepsPerDegree.ToString();
             }
             else
                throw new ASCOM.ActionNotImplementedException("Action " + actionName + " is not implemented by this driver");
@@ -392,8 +398,8 @@ namespace ASCOM.scopefocus
                             if (setPos)
                                 CommandString("P " + Math.Round(posValue * stepsPerDegree + (360 * stepsPerDegree), 0).ToString() + "#", false);   // was + 36000 not 360*stepsperdegree
 
-                            if (IsTcpTransport())
-                                CommandString("D " + stepsPerDegree.ToString() + "#", false);
+                            // Sync stepsPerDegree to firmware (both Serial and TCP)
+                            CommandString("D " + stepsPerDegree.ToString() + "#", false);
 
                             CommandString("A " + acceleration.ToString() + "#", false);
                             CommandString("X " + maxSpeed.ToString() + "#", false);

@@ -606,9 +606,29 @@ String processCommand(String command, bool isAuthenticated) {
       return statusResponse();
     case 'N': {
       // No-backlash move for field rotation tracking
-      // Input is PHYSICAL steps (not logical), directly move without backlash
-      // Plugin calculates: physicalSteps = angle * stepsPerDegree + 200 * stepsPerDegree
+      // Input is PHYSICAL steps, directly move without backlash compensation
+      // Plugin should query stepsPerDegree via 'D#' command and calculate steps
+      long revolutionSteps = 360L * settings.stepsPerDegree;
       long target = value;
+      // Choose closest equivalent position within valid range
+      long current = stepper.currentPosition();
+      // Wrap into approximate range first
+      while (target > settings.maxSteps + revolutionSteps) target -= revolutionSteps;
+      while (target < -revolutionSteps) target += revolutionSteps;
+      // Try all three equivalent positions and pick closest valid one
+      long candidates[3] = {target, target + revolutionSteps, target - revolutionSteps};
+      long bestTarget = target;
+      long bestDistance = LONG_MAX;
+      for (int i = 0; i < 3; i++) {
+        if (candidates[i] >= 0 && candidates[i] <= settings.maxSteps) {
+          long dist = abs(candidates[i] - current);
+          if (dist < bestDistance) {
+            bestDistance = dist;
+            bestTarget = candidates[i];
+          }
+        }
+      }
+      target = bestTarget;
       if (target < 0 || target > settings.maxSteps) {
         return "ERR:out_of_range#";
       }
