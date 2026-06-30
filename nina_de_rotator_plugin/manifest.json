@@ -1,0 +1,12 @@
+{
+    "id": "AltAz.DeRotator",
+    "name": "Alt-Az De-Rotator",
+    "version": "1.2.0.0",
+    "description": "Actively compensates for field rotation on Alt-Azimuth mounts by calculating and commanding an ASCOM rotator (e.g. ECAA). Forked from ArchitectJuan/Nina_Rotator_Plugin with accumulated-error tracking and direct MoveAbsolute fixes.",
+    "author": "ArchitectJuan / ECAA project",
+    "minimumApplicationVersion": "3.0.0.9001",
+    "license": "MIT",
+    "licenseURL": "https://opensource.org/licenses/MIT",
+    "repository": "https://github.com/Indigo2233/ECAA",
+    "homepage": "https://github.com/Indigo2233/ECAA"
+}

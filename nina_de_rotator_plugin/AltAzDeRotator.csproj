@@ -1,0 +1,75 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows7.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <OutputPath>Builds\AltAz.DeRotator\</OutputPath>
+    <Version>1.2.0.0</Version>
+    <AssemblyVersion>1.2.0.0</AssemblyVersion>
+    <FileVersion>1.2.0.0</FileVersion>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="manifest.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="Icon.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Resolve System.Text.Json conflict by forcing 9.0.0 -->
+    <PackageReference Include="System.Text.Json" Version="9.0.0" />
+    <PackageReference Include="System.ComponentModel.Composition" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Use HintPaths but ensure they don't overwrite local versions if possible -->
+    <Reference Include="NINA">
+      <HintPath>C:\Program Files\N.I.N.A. - Nighttime Imaging 'N' Astronomy\NINA.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="NINA.Core">
+      <HintPath>C:\Program Files\N.I.N.A. - Nighttime Imaging 'N' Astronomy\NINA.Core.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="NINA.Plugin">
+      <HintPath>C:\Program Files\N.I.N.A. - Nighttime Imaging 'N' Astronomy\NINA.Plugin.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="NINA.Equipment">
+      <HintPath>C:\Program Files\N.I.N.A. - Nighttime Imaging 'N' Astronomy\NINA.Equipment.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="NINA.WPF.Base">
+      <HintPath>C:\Program Files\N.I.N.A. - Nighttime Imaging 'N' Astronomy\NINA.WPF.Base.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="NINA.Profile">
+      <HintPath>C:\Program Files\N.I.N.A. - Nighttime Imaging 'N' Astronomy\NINA.Profile.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="CommunityToolkit.Mvvm">
+      <HintPath>C:\Program Files\N.I.N.A. - Nighttime Imaging 'N' Astronomy\CommunityToolkit.Mvvm.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="CleanupNINADLLs" AfterTargets="Build">
+    <ItemGroup>
+      <NINADLLFiles Include="$(OutputPath)NINA*.dll" />
+      <NINADLLFiles Include="$(OutputPath)CommunityToolkit*.dll" />
+      <NINADLLFiles Include="$(OutputPath)System.Text.Json*.dll" />
+    </ItemGroup>
+    <Delete Files="@(NINADLLFiles)" />
+  </Target>
+
+</Project>

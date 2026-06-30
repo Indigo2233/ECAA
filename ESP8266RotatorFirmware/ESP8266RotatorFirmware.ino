@@ -44,6 +44,7 @@ struct RotatorSettings {
   char tcpPassword[16];
   char apPassword[32];
   char nickname[32];
+  int backlashSteps;
 };
 
 RotatorSettings settings;
@@ -62,6 +63,8 @@ String mdnsHostname;
 bool positionSaved = true;
 bool findingHome = false;
 bool homeFound = false;
+bool backlashCompensating = false;
+long backlashFinalTarget = 0;
 bool manualMoveCW = false;
 bool manualMoveCCW = false;
 int lastCWState = HIGH;
@@ -323,6 +326,10 @@ void loadSettings() {
   if (settings.homeOffsetSteps < -center || settings.homeOffsetSteps > center) {
     settings.homeOffsetSteps = 0;
   }
+  // Default backlash compensation: 5 degrees
+  if (settings.backlashSteps <= 0 || settings.backlashSteps > settings.stepsPerDegree * 30) {
+    settings.backlashSteps = settings.stepsPerDegree * 5;
+  }
 }
 
 void applyMotionSettings() {
@@ -360,12 +367,14 @@ long logicalToPhysicalSteps(long logicalSteps) {
 }
 
 void clampHomeOffset() {
-  long center = mechanicalHomeSteps();
-  if (settings.homeOffsetSteps < -center) {
-    settings.homeOffsetSteps = -center;
+  // Limit homeOffsetSteps to ±half of physical range
+  // Physical range (0 to maxSteps) ensures no excessive rotation
+  long maxOffset = settings.maxSteps / 2L;
+  if (settings.homeOffsetSteps < -maxOffset) {
+    settings.homeOffsetSteps = -maxOffset;
   }
-  if (settings.homeOffsetSteps > center) {
-    settings.homeOffsetSteps = center;
+  if (settings.homeOffsetSteps > maxOffset) {
+    settings.homeOffsetSteps = maxOffset;
   }
 }
 
@@ -416,6 +425,28 @@ bool moveToPhysicalSteps(long target) {
   if (!findingHome && (target < 0 || target > settings.maxSteps)) {
     return false;
   }
+  
+  // Cancel any pending backlash compensation if new move requested
+  backlashCompensating = false;
+  
+  long current = stepper.currentPosition();
+  
+  // Backlash compensation: when moving to larger position, overshoot first
+  // Skip during homing
+  long moveDistance = target - current;
+  if (!findingHome && settings.backlashSteps > 0 && moveDistance > 0) {
+    long overshoot = target + settings.backlashSteps;
+    // Allow overshoot beyond maxSteps by backlashSteps amount for compensation
+    long overshootLimit = settings.maxSteps + settings.backlashSteps;
+    if (overshoot <= overshootLimit) {
+      backlashCompensating = true;
+      backlashFinalTarget = target;
+      stepper.moveTo(overshoot);
+      positionSaved = false;
+      return true;
+    }
+  }
+  
   stepper.moveTo(target);
   positionSaved = false;
   return true;
@@ -508,7 +539,8 @@ String statusJson() {
   json += ".local\"";
   json += ",\"nickname\":\"";
   json += settings.nickname;
-  json += "\"";
+  json += "\",\"backlashSteps\":";
+  json += settings.backlashSteps;
   json += "}";
   return json;
 }
@@ -573,6 +605,24 @@ String processCommand(String command, bool isAuthenticated) {
       }
       broadcastStatus();
       return statusResponse();
+    case 'N': {
+      // No-backlash move for field rotation tracking
+      // Directly move without backlash compensation
+      long revolutionSteps = 360L * settings.stepsPerDegree;
+      long physicalA = logicalToPhysicalSteps(value);
+      long physicalB = logicalToPhysicalSteps(value + revolutionSteps);
+      long physicalC = logicalToPhysicalSteps(value - revolutionSteps);
+      long target = choosePhysicalTarget(physicalA, physicalB);
+      target = choosePhysicalTarget(target, physicalC);
+      if (target < 0 || target > settings.maxSteps) {
+        return "ERR:out_of_range#";
+      }
+      backlashCompensating = false;
+      stepper.moveTo(target);
+      positionSaved = false;
+      broadcastStatus();
+      return statusResponse();
+    }
     case 'H':
       findingHome = true;
       homeFound = false;
@@ -581,6 +631,7 @@ String processCommand(String command, bool isAuthenticated) {
     case 'S':
       stepper.stop();
       findingHome = false;
+      backlashCompensating = false;
       broadcastStatus();
       return "S#";
     case 'R':
@@ -758,6 +809,7 @@ void handleMoveApi() {
 void handleHaltApi() {
   stepper.stop();
   findingHome = false;
+  backlashCompensating = false;
   broadcastStatus();
   sendJson(200, statusJson());
 }
@@ -1070,7 +1122,14 @@ void loop() {
   updateEnablePin();
   stepper.run();
 
-  if (stepper.distanceToGo() == 0 && !positionSaved && !findingHome) {
+  // Handle backlash compensation: after overshoot, move to final target
+  if (backlashCompensating && stepper.distanceToGo() == 0) {
+    backlashCompensating = false;
+    stepper.moveTo(backlashFinalTarget);
+    // Don't save position yet, wait for final move to complete
+  }
+
+  if (stepper.distanceToGo() == 0 && !positionSaved && !findingHome && !backlashCompensating) {
     positionSaved = true;
     saveSettings();
     broadcastStatus();

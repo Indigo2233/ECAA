@@ -77,7 +77,7 @@ namespace ASCOM.scopefocus
         bool isReversed = false;
         long homeOffsetSteps = 0; // cached from firmware I# JSON, updated after Sync
 
-        long UPDATETICKS = (long)(1 * 10000000.0); // 10,000,000 ticks in 1 second
+        long UPDATETICKS = (long)(0.3 * 10000000.0); // 3,000,000 ticks = 300ms for faster UI updates
         long lastUpdate = 0;
 
 
@@ -108,7 +108,7 @@ namespace ASCOM.scopefocus
         internal static string tcpPortProfileName = "TcpPort";
         internal static string tcpPortDefault = "4030";
         internal static string commandTimeoutProfileName = "CommandTimeoutMs";
-        internal static string commandTimeoutDefault = "3000";
+        internal static string commandTimeoutDefault = "15000";
         internal static string traceStateProfileName = "Trace Level";
         internal static string traceStateDefault = "false";
         internal static string tcpPasswordProfileName = "TcpPassword";
@@ -351,7 +351,7 @@ namespace ASCOM.scopefocus
                         comPort = GetProfileValue(p, comPortLegacyProfileName, GetProfileValue(p, comPortProfileName, comPortDefault));
                         tcpHost = GetProfileValue(p, tcpHostProfileName, tcpHostDefault);
                         tcpPort = ParseInt(GetProfileValue(p, tcpPortProfileName, tcpPortDefault), 4030);
-                        commandTimeoutMs = ParseInt(GetProfileValue(p, commandTimeoutProfileName, commandTimeoutDefault), 3000);
+                        commandTimeoutMs = ParseInt(GetProfileValue(p, commandTimeoutProfileName, commandTimeoutDefault), 15000);
                         tcpPassword = GetProfileValue(p, tcpPasswordProfileName, tcpPasswordDefault);
                         setPos = GetProfileValue(p, "SetPos", "false").ToLowerInvariant().Equals("true");
                         contHold = GetProfileValue(p, "ContHold", "false").ToLowerInvariant().Equals("true");
@@ -662,77 +662,19 @@ namespace ASCOM.scopefocus
         }
         public double PositionAngleToMotorSteps(float targetPositionAngle)
         {
-            float targetAngle = 0;
-            var absTargetAngle1 = targetPositionAngle + 360;
-            var absTargetAngle2 = targetPositionAngle;
-            var angleDelta1 = absTargetAngle1 - StepperPos / stepsPerDegree;
-            var angleDelta2 = StepperPos / stepsPerDegree - absTargetAngle2;
-            if (absTargetAngle1 < 0 || absTargetAngle1 > 720)
-            {
-                targetAngle = absTargetAngle2;
-                return targetAngle * stepsPerDegree;
-            }
-            if (absTargetAngle2 < 0 || absTargetAngle2 > 720)
-            { 
-                targetAngle = absTargetAngle1;
-            return targetAngle * stepsPerDegree;
-             }
-
-
-
-            if (angleDelta1 < angleDelta2)
-            {
-                // if target is close to 0 or 72000 AND the move is < 90 degrees then go there(acceptable if close)...otherwise want to stay close to 36000
-                if ((absTargetAngle1 < 90 && angleDelta1 < 90) || (absTargetAngle1 > 630 && angleDelta1 < 90))
-                    targetAngle = absTargetAngle1;
-                else
-                    targetAngle = absTargetAngle2;
-                if (absTargetAngle1 >= 90 && absTargetAngle1 <= 630) // if outside the close to 0/72000 zone then use smaller delta
-                    targetAngle = absTargetAngle1;
-
-
-            }
-            else // delta 2 is smaller so in general use it unless within 90 of 0/72000 OR if close then ok 
-            {
-                if ((absTargetAngle2 < 90 && angleDelta2 < 90) || (absTargetAngle2 > 630 && angleDelta2 < 90))
-                    targetAngle = absTargetAngle2;
-                else
-                targetAngle = absTargetAngle1;
-                if (absTargetAngle2 >= 90 && absTargetAngle2 <= 630)
-                    targetAngle = absTargetAngle2;
-
-            }
-            return targetAngle * stepsPerDegree;
-
-            //var targetSteps1 = stepperPosition + (absTargetAngle1 * 100);
-            //var targetAngle2 = stepperPosition - (absTargetAngle2 * 100);
-
-            //var targetPosStepsFinal = 0F;
-            //    var angleDelta1 = targetPositionAngle - Position;
-            //    var angleDelta2 = targetPositionAngle  - (Position - 360 );
-            //var targetSteps1 = StepperPos + (angleDelta1 * 100);
-            //var targetSteps2 = StepperPos + (angleDelta2 * 100);
-
-            //if (targetSteps2 > 72000 || targetSteps2 < 0)
-            //     targetPosStepsFinal = targetSteps1;
-            //if (targetSteps1 > 72000 || targetSteps1 < 0)
-            //    targetPosStepsFinal = targetSteps2;
-            //if (targetSteps1 < targetSteps2)
-            //    targetPosStepsFinal = targetSteps1;
-            //else
-            //    targetPosStepsFinal = targetSteps2;
-
-
-
-
-            //      targetPosStepsFinal = targetPosSteps1;
-            //   else
-            //   targetPosStepsFinal = targetPosSteps2;
-
-            //if (targetPosStepsFinal < 0 || targetPosStepsFinal > 72000)
-            //    throw new ASCOM.InvalidOperationException("stepper target out of range");
-            //  else
-
+            // Convert target angle (0-360) to logical steps
+            // Firmware formula: angle = (logicalSteps - centerSteps) / stepsPerDegree
+            // So: logicalSteps = angle * stepsPerDegree + centerSteps
+            var centerSteps = 200 * stepsPerDegree;
+            
+            // Normalize target angle to 0-360
+            while (targetPositionAngle < 0) targetPositionAngle += 360.0F;
+            while (targetPositionAngle >= 360.0F) targetPositionAngle -= 360.0F;
+            
+            // Calculate target logical steps
+            var targetSteps = targetPositionAngle * stepsPerDegree + centerSteps;
+            
+            return targetSteps;
         }
 
         public void MoveAbsolute(float pos)
@@ -808,14 +750,15 @@ namespace ASCOM.scopefocus
             get
             {
                 DoUpdate();
-                //rotatorPosition = lastPos;
-                //return lastPos;
-                //   return (lastPos - 9000) / 100 % 360;  // was get{}
-                var pos = (lastPos - 360 * stepsPerDegree) / stepsPerDegree;
-                if (pos < 0)
-                    pos += 360.00F;
+                // Angle = (logicalSteps - centerSteps) / stepsPerDegree
+                // centerSteps = maxSteps/2 = 200 * stepsPerDegree (for 400-degree range)
+                var centerSteps = 200 * stepsPerDegree;
+                var pos = (lastPos - centerSteps) / stepsPerDegree;
+                while (pos < 0)
+                    pos += 360.0F;
+                while (pos >= 360.0F)
+                    pos -= 360.0F;
                 return pos;
-                // set { rotatorPosition = value; }
 
 
                 //tl.LogMessage("Position Get", rotatorPosition.ToString()); // This rotator has instantaneous movement
@@ -1191,7 +1134,7 @@ namespace ASCOM.scopefocus
                 transport = GetProfileValue(driverProfile, transportProfileName, transportDefault);
                 tcpHost = GetProfileValue(driverProfile, tcpHostProfileName, tcpHostDefault);
                 tcpPort = ParseInt(GetProfileValue(driverProfile, tcpPortProfileName, tcpPortDefault), 4030);
-                commandTimeoutMs = ParseInt(GetProfileValue(driverProfile, commandTimeoutProfileName, commandTimeoutDefault), 3000);
+                commandTimeoutMs = ParseInt(GetProfileValue(driverProfile, commandTimeoutProfileName, commandTimeoutDefault), 15000);
                 tcpPassword = GetProfileValue(driverProfile, tcpPasswordProfileName, tcpPasswordDefault);
                 stepsPerDegree = ParseInt(GetProfileValue(driverProfile, "StepsPerDegree", "100"), 100);
                 maxSpeed = ParseInt(GetProfileValue(driverProfile, "MaxSpeed", "800"), 800);
