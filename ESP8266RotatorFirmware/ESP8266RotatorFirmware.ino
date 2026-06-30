@@ -2,6 +2,7 @@
 #include <EEPROM.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266WiFi.h>
+#include <ESP8266mDNS.h>
 #include <WebSocketsServer.h>
 #include <ctype.h>
 #include <math.h>
@@ -40,6 +41,9 @@ struct RotatorSettings {
   char staSsid[32];
   char staPassword[64];
   long homeOffsetSteps;
+  char tcpPassword[16];
+  char apPassword[32];
+  char nickname[32];
 };
 
 RotatorSettings settings;
@@ -50,8 +54,10 @@ WiFiServer tcpServer(ASCOM_TCP_PORT);
 WiFiClient tcpClients[MAX_TCP_CLIENTS];
 
 String tcpBuffers[MAX_TCP_CLIENTS];
+bool tcpAuthenticated[MAX_TCP_CLIENTS];
 String serialBuffer;
 String apSsid;
+String mdnsHostname;
 
 bool positionSaved = true;
 bool findingHome = false;
@@ -105,13 +111,18 @@ input{width:100%;background:#121720;color:var(--text);border:1px solid var(--lin
 .tick{position:absolute;color:var(--muted);font-size:12px}
 .t0{left:50%;top:8px;transform:translateX(-50%)}.t90{right:8px;top:50%;transform:translateY(-50%)}.t180{left:50%;bottom:8px;transform:translateX(-50%)}.t270{left:8px;top:50%;transform:translateY(-50%)}
 .small{font-size:12px;color:var(--muted)}
+.toast{font-size:13px;color:var(--ok);min-height:20px;transition:color .3s;display:flex;align-items:center;gap:6px}
+.toast.info{color:var(--accent)}
+.toast.warn{color:var(--warn)}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
+@keyframes spin{to{transform:rotate(360deg)}}
 @media (min-width:680px){.grid{grid-template-columns:1fr 1fr}.span{grid-column:1/-1}}
 </style>
 </head>
 <body>
 <main>
 <header>
-<h1>CAA Rotator</h1>
+<h1 id="pageTitle">CAA Rotator</h1>
 <div class="status" id="link">Connecting</div>
 </header>
 <div class="grid">
@@ -142,9 +153,13 @@ input{width:100%;background:#121720;color:var(--text);border:1px solid var(--lin
 <label>Max speed<input id="maxSpeed" type="number" min="1" step="1"></label>
 <label>Acceleration<input id="acceleration" type="number" min="1" step="1"></label>
 <label>Manual step<input id="manualStep" type="number" min="1" step="1"></label>
+<label>Device Name<input id="nickname" type="text" maxlength="31" placeholder="mDNS hostname"></label>
+<label>AP Password<input id="apPassword" type="password" maxlength="31" placeholder="default: 012345678"></label>
 <label>STA SSID<input id="staSsid" type="text" maxlength="31"></label>
 <label>STA Password<input id="staPassword" type="password" maxlength="63"></label>
+<label>TCP Password<input id="tcpPassword" type="password" maxlength="15" placeholder="empty = no auth"></label>
 <button class="primary wide" id="saveSettings">Save settings</button>
+<div class="toast wide" id="saveMsg"></div>
 <div class="small wide" id="network"></div>
 </div>
 </section>
@@ -161,6 +176,9 @@ async function api(path,body){
 }
 function setState(s){
  state=s;
+ const title=s.nickname?s.nickname:'CAA Rotator';
+ document.title=title;
+ $('pageTitle').textContent=title;
  $('angle').textContent=(s.angle??0).toFixed(2)+'°';
  $('steps').textContent=String(s.positionSteps??0);
  $('needle').style.transform='rotate('+((s.angle??0)+180)+'deg)';
@@ -172,9 +190,13 @@ function setState(s){
  $('maxSpeed').value=s.maxSpeed??800;
  $('acceleration').value=s.acceleration??1000;
  $('manualStep').value=s.manualStep??50;
+ if(document.activeElement!==$('nickname'))$('nickname').value=s.nickname||'';
  if(document.activeElement!==$('staSsid'))$('staSsid').value=s.staSsid||'';
+ if(document.activeElement!==$('tcpPassword'))$('tcpPassword').placeholder=s.tcpLocked?'••••••••':'empty = no auth';
+ if(document.activeElement!==$('apPassword'))$('apPassword').placeholder=s.apCustom?'••••••••':'default: 012345678';
  const staIp=s.staIp&&s.staIp!=='0.0.0.0'?s.staIp:'not connected';
- $('network').textContent='AP: '+(s.apIp||'192.168.4.1')+' | STA: '+staIp+' | TCP: '+(s.tcpPort||4030);
+ const mdnsHost=(s.mdns||'').replace('.local','');
+ $('network').innerHTML='AP: '+(s.apIp||'192.168.4.1')+' | STA: '+staIp+'<br>mDNS: <b>'+(s.mdns||'')+'</b> | TCP: '+(s.tcpPort||4030)+'<br>ASCOM Host: <b>'+mdnsHost+'</b> or <b>'+staIp+'</b>';
 }
 async function refresh(){try{setState(await api('/api/status'));}catch(e){$('link').textContent='Disconnected';}}
 function connectWs(){
@@ -190,16 +212,63 @@ $('home').onclick=()=>api('/api/home',{}).then(setState);
 $('setZero').onclick=()=>api('/api/set-position',{angle:0}).then(setState);
 $('hold').onclick=()=>api('/api/settings',{hold:!state.hold}).then(setState);
 $('reverse').onclick=()=>api('/api/settings',{reversed:!state.reversed}).then(setState);
-$('saveSettings').onclick=()=>{
+let staWaiting=false,staWatchTimer=null,staWatchCount=0;
+function showMsg(text,cls,spin){
+ const m=$('saveMsg');
+ m.innerHTML=(spin?'<span class="spinner"></span>':'')+text;
+ m.className='toast wide'+(cls?' '+cls:'');
+}
+async function watchStaIp(){
+ if(!staWaiting)return;
+ staWatchCount++;
+ try{
+  const s=await api('/api/status');
+  if(s.staIp&&s.staIp!=='0.0.0.0'){
+   staWaiting=false;
+   showMsg('WiFi connected: '+s.staIp);
+   if(staWatchTimer){clearInterval(staWatchTimer);staWatchTimer=null;}
+   setState(s);
+   return;
+  }
+  if(staWatchCount>30){staWaiting=false;showMsg('WiFi timeout - check SSID/password','warn');if(staWatchTimer){clearInterval(staWatchTimer);staWatchTimer=null;}}
+ }catch(e){}
+}
+$('saveSettings').onclick=async()=>{
+ const btn=$('saveSettings');
+ btn.disabled=true;btn.textContent='Saving...';
+ showMsg('Saving settings...','info',true);
  const body={
   stepsPerDegree:Number($('stepsPerDegree').value),
   maxSpeed:Number($('maxSpeed').value),
   acceleration:Number($('acceleration').value),
-  manualStep:Number($('manualStep').value)
+  manualStep:Number($('manualStep').value),
+  nickname:$('nickname').value.trim()
  };
- if($('staSsid').value.trim())body.staSsid=$('staSsid').value.trim();
+ const hasSta=$('staSsid').value.trim();
+ if(hasSta)body.staSsid=hasSta;
  if($('staPassword').value)body.staPassword=$('staPassword').value;
- api('/api/settings',body).then(setState);
+ body.tcpPassword=$('tcpPassword').value;
+ if($('apPassword').value)body.apPassword=$('apPassword').value;
+ try{
+  const s=await api('/api/settings',body);
+  setState(s);
+  btn.textContent='Save settings';
+  btn.disabled=false;
+  if(hasSta&&(!s.staIp||s.staIp==='0.0.0.0')){
+   staWaiting=true;staWatchCount=0;
+   showMsg('Connecting to WiFi...','info',true);
+   if(staWatchTimer)clearInterval(staWatchTimer);
+   staWatchTimer=setInterval(watchStaIp,1500);
+  }else if(hasSta&&s.staIp&&s.staIp!=='0.0.0.0'){
+   showMsg('Settings saved. WiFi: '+s.staIp);
+  }else{
+   showMsg('Settings saved');
+  }
+ }catch(e){
+  btn.textContent='Save settings';
+  btn.disabled=false;
+  showMsg('Save failed - retry','warn');
+ }
 };
 connectWs();
 refresh();
@@ -222,9 +291,9 @@ void loadSettings() {
   if (settings.magic != SETTINGS_MAGIC || settings.stepsPerDegree <= 0) {
     memset(&settings, 0, sizeof(settings));
     settings.magic = SETTINGS_MAGIC;
-    settings.position = 36000;
+    settings.position = 20000;
     settings.stepsPerDegree = 100;
-    settings.maxSteps = 72000;
+    settings.maxSteps = 40000;
     settings.maxSpeed = 800;
     settings.acceleration = 1000;
     settings.manualMoveStepSize = 50;
@@ -232,11 +301,23 @@ void loadSettings() {
     settings.hold = false;
     settings.reversed = false;
     settings.homeOffsetSteps = 0;
+    strcpy(settings.apPassword, "012345678");
     EEPROM.put(0, settings);
     EEPROM.commit();
   }
+  if (settings.apPassword[0] == '\0' || !isprint(settings.apPassword[0])) {
+    strcpy(settings.apPassword, "012345678");
+  }
+  // Clean garbage tcpPassword from old EEPROM layout
+  if (settings.tcpPassword[0] != '\0' && !isprint(settings.tcpPassword[0])) {
+    memset(settings.tcpPassword, 0, sizeof(settings.tcpPassword));
+  }
+  // Clean garbage nickname from old EEPROM layout
+  if (settings.nickname[0] != '\0' && !isprint(settings.nickname[0])) {
+    memset(settings.nickname, 0, sizeof(settings.nickname));
+  }
   if (settings.maxSteps <= 0) {
-    settings.maxSteps = (long)settings.stepsPerDegree * 720L;
+    settings.maxSteps = (long)settings.stepsPerDegree * 400L;
   }
   long center = settings.maxSteps / 2L;
   if (settings.homeOffsetSteps < -center || settings.homeOffsetSteps > center) {
@@ -418,6 +499,16 @@ String statusJson() {
   json += settings.staSsid;
   json += "\",\"tcpPort\":";
   json += ASCOM_TCP_PORT;
+  json += ",\"tcpLocked\":";
+  json += (strlen(settings.tcpPassword) > 0) ? "true" : "false";
+  json += ",\"apCustom\":";
+  json += (strcmp(settings.apPassword, "012345678") != 0) ? "true" : "false";
+  json += ",\"mdns\":\"";
+  json += mdnsHostname;
+  json += ".local\"";
+  json += ",\"nickname\":\"";
+  json += settings.nickname;
+  json += "\"";
   json += "}";
   return json;
 }
@@ -436,7 +527,7 @@ long commandParameter(String command) {
   return param.toInt();
 }
 
-String processCommand(String command) {
+String processCommand(String command, bool isAuthenticated) {
   command.trim();
   if (command.endsWith("#")) {
     command.remove(command.length() - 1);
@@ -447,12 +538,29 @@ String processCommand(String command) {
   }
 
   char code = command.charAt(0);
+
+  // Auth gate: if password is set and not authenticated, only allow K/V/G/I/T/#
+  bool needsAuth = strlen(settings.tcpPassword) > 0;
+  if (needsAuth && !isAuthenticated) {
+    if (code != 'K' && code != 'V' && code != 'G' && code != 'I' && code != 'T' && code != '#') {
+      return "ERR:auth#";
+    }
+  }
+
   long value = commandParameter(command);
   switch (code) {
     case '#':
       return String(DEVICE_RESPONSE) + "#";
     case 'G':
       return statusResponse();
+    case 'K': {
+      String pwd = command.substring(1);
+      pwd.trim();
+      if (strlen(settings.tcpPassword) > 0 && pwd.equals(settings.tcpPassword)) {
+        return "K ok#";
+      }
+      return "K fail#";
+    }
     case 'P':
       setCurrentLogicalPosition(value);
       positionSaved = true;
@@ -489,6 +597,8 @@ String processCommand(String command) {
       return String("hold = ") + boolText(settings.hold) + "#";
     case 'V':
       return String("V ") + FIRMWARE_VERSION + "#";
+    case 'T':
+      return String("T Rotator#");
     case 'I':
       return statusJson() + "#";
     case 'D':
@@ -496,7 +606,7 @@ String processCommand(String command) {
         return "ERR:steps_per_degree#";
       }
       settings.stepsPerDegree = (int)value;
-      settings.maxSteps = (long)settings.stepsPerDegree * 720L;
+      settings.maxSteps = (long)settings.stepsPerDegree * 400L;
       clampHomeOffset();
       saveSettings();
       broadcastStatus();
@@ -686,7 +796,7 @@ void handleSettingsPostApi() {
 
   if (extractNumber(body, "stepsPerDegree", numberValue) && numberValue > 0) {
     settings.stepsPerDegree = (int)numberValue;
-    settings.maxSteps = (long)settings.stepsPerDegree * 720L;
+    settings.maxSteps = (long)settings.stepsPerDegree * 400L;
     clampHomeOffset();
   }
   if (extractNumber(body, "maxSpeed", numberValue) && numberValue > 0) {
@@ -712,6 +822,19 @@ void handleSettingsPostApi() {
   bool staChanged = false;
   staChanged |= extractString(body, "staSsid", settings.staSsid, sizeof(settings.staSsid));
   staChanged |= extractString(body, "staPassword", settings.staPassword, sizeof(settings.staPassword));
+  extractString(body, "tcpPassword", settings.tcpPassword, sizeof(settings.tcpPassword));
+
+  char oldNickname[32];
+  strcpy(oldNickname, settings.nickname);
+  bool nicknameChanged = extractString(body, "nickname", settings.nickname, sizeof(settings.nickname));
+
+  char newApPwd[32];
+  newApPwd[0] = '\0';
+  bool apPwdChanged = extractString(body, "apPassword", newApPwd, sizeof(newApPwd));
+  if (apPwdChanged && strlen(newApPwd) >= 8) {
+    strcpy(settings.apPassword, newApPwd);
+    WiFi.softAP(apSsid.c_str(), settings.apPassword);
+  }
 
   applyMotionSettings();
   saveSettings();
@@ -719,6 +842,11 @@ void handleSettingsPostApi() {
 
   if (staChanged && strlen(settings.staSsid) > 0) {
     WiFi.begin(settings.staSsid, settings.staPassword);
+  }
+
+  if (nicknameChanged && strcmp(oldNickname, settings.nickname) != 0) {
+    updateMdnsHostname();
+    MDNS.begin(mdnsHostname.c_str());
   }
 
   broadcastStatus();
@@ -751,11 +879,47 @@ void setupHttp() {
   server.begin();
 }
 
+String sanitizeHostname(const char *name) {
+  String result = "";
+  for (int i = 0; name[i] != '\0' && i < 31; i++) {
+    char c = name[i];
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+      result += c;
+    } else if (c >= 'A' && c <= 'Z') {
+      result += (char)(c + 32);
+    } else if (c == ' ' || c == '_' || c == '-') {
+      if (result.length() > 0 && result.charAt(result.length() - 1) != '-') {
+        result += '-';
+      }
+    }
+  }
+  while (result.length() > 0 && result.charAt(result.length() - 1) == '-') {
+    result.remove(result.length() - 1);
+  }
+  return result;
+}
+
+void updateMdnsHostname() {
+  String chipIdStr = String(ESP.getChipId(), HEX);
+  String suffix = chipIdStr.substring(chipIdStr.length() > 4 ? chipIdStr.length() - 4 : 0);
+  if (strlen(settings.nickname) > 0) {
+    String sanitized = sanitizeHostname(settings.nickname);
+    if (sanitized.length() >= 2) {
+      mdnsHostname = sanitized + "-" + suffix;
+    } else {
+      mdnsHostname = "caa-rotator-" + chipIdStr;
+    }
+  } else {
+    mdnsHostname = "caa-rotator-" + chipIdStr;
+  }
+}
+
 void setupWifi() {
   apSsid = "CAA-Rotator-" + String(ESP.getChipId(), HEX);
+  updateMdnsHostname();
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAPConfig(apIp, apGateway, apSubnet);
-  WiFi.softAP(apSsid.c_str(), AP_PASSWORD);
+  WiFi.softAP(apSsid.c_str(), settings.apPassword);
   if (strlen(settings.staSsid) > 0) {
     WiFi.begin(settings.staSsid, settings.staPassword);
   }
@@ -775,6 +939,7 @@ void handleTcpClients() {
         tcpClients[i] = nextClient;
         tcpClients[i].setNoDelay(true);
         tcpBuffers[i] = "";
+        tcpAuthenticated[i] = false;
         assigned = true;
         break;
       }
@@ -791,7 +956,10 @@ void handleTcpClients() {
     while (tcpClients[i].available()) {
       char c = (char)tcpClients[i].read();
       if (c == '#') {
-        String response = processCommand(tcpBuffers[i]);
+        String response = processCommand(tcpBuffers[i], tcpAuthenticated[i]);
+        if (response.startsWith("K ok")) {
+          tcpAuthenticated[i] = true;
+        }
         tcpClients[i].print(response);
         tcpBuffers[i] = "";
       } else if (c != '\r' && c != '\n') {
@@ -805,7 +973,7 @@ void handleSerial() {
   while (Serial.available() > 0) {
     char c = (char)Serial.read();
     if (c == '#') {
-      Serial.print(processCommand(serialBuffer));
+      Serial.print(processCommand(serialBuffer, true));
       serialBuffer = "";
     } else if (c != '\r' && c != '\n') {
       serialBuffer += c;
@@ -872,6 +1040,9 @@ void setup() {
   updateEnablePin();
 
   setupWifi();
+  if (MDNS.begin(mdnsHostname.c_str())) {
+    Serial.println("mDNS: " + mdnsHostname + ".local");
+  }
   setupHttp();
   webSocket.begin();
   webSocket.onEvent([](uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
@@ -889,6 +1060,7 @@ void setup() {
 }
 
 void loop() {
+  MDNS.update();
   server.handleClient();
   webSocket.loop();
   handleTcpClients();

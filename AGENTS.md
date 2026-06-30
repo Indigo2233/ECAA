@@ -1,6 +1,27 @@
 # ECAA Development Guide for Agents
 
-This repository contains firmware, ASCOM driver code, test utilities, and mechanical assets for the ECAA ESP8266 electric camera angle adjuster.
+> **2026-06-30 Session**: Firmware v2001+TCP auth+mDNS+UI, Driver v6.4.0.0+TCP password.
+> See `/memories/session/ecaa-session-summary.md` for full details.
+> **Before flashing**: ALWAYS confirm 12V motor power is disconnected.
+
+## Quick Commands
+
+### Flash Firmware
+```powershell
+$cli = "$env:LOCALAPPDATA\ArduinoCLI\arduino-cli.exe"
+& $cli compile --fqbn esp8266:esp8266:d1_mini "d:\Unity\electric-caa\ESP8266RotatorFirmware\ESP8266RotatorFirmware.ino"
+& $cli upload --fqbn esp8266:esp8266:d1_mini -p COM3 "d:\Unity\electric-caa\ESP8266RotatorFirmware\ESP8266RotatorFirmware.ino"
+```
+
+### Build Driver (no .NET 4.8 SDK, use 4.7.2 refs)
+```powershell
+& "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe" driver\scopefocusRotatorDriver\scopefocusRotatorDriver.csproj /p:Configuration=Release /p:TargetFrameworkVersion=v4.7.2 /p:RegisterForComInterop=false /m
+```
+
+### Register Driver (64-bit, from obj)
+```powershell
+& "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\RegAsm.exe" "d:\Unity\electric-caa\driver\scopefocusRotatorDriver\obj\Release\ASCOM.ECAA.Rotator.dll" /codebase /tlb
+```
 
 ## Project Map
 

@@ -75,6 +75,7 @@ namespace ASCOM.scopefocus
         bool lastMoving = false;
         bool lastLink = false;
         bool isReversed = false;
+        long homeOffsetSteps = 0; // cached from firmware I# JSON, updated after Sync
 
         long UPDATETICKS = (long)(1 * 10000000.0); // 10,000,000 ticks in 1 second
         long lastUpdate = 0;
@@ -110,6 +111,8 @@ namespace ASCOM.scopefocus
         internal static string commandTimeoutDefault = "3000";
         internal static string traceStateProfileName = "Trace Level";
         internal static string traceStateDefault = "false";
+        internal static string tcpPasswordProfileName = "TcpPassword";
+        internal static string tcpPasswordDefault = "";
 
         internal static string comPort; // Variables to hold the currrent device configuration
         internal static string transport;
@@ -120,6 +123,7 @@ namespace ASCOM.scopefocus
         internal static int stepsPerDegree;
         internal static int maxSpeed;
         internal static int acceleration;
+        internal static string tcpPassword;
 
         /// <summary>
         /// Private variable to hold the connected state
@@ -142,6 +146,29 @@ namespace ASCOM.scopefocus
         private TraceLogger tl;
 
         /// <summary>
+        /// Debug log file path - always writes to this file regardless of trace setting
+        /// </summary>
+        private static string debugLogPath = System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            "ASCOM", "Logs", "ECAA-Rotator-Debug.log");
+
+        /// <summary>
+        /// Write debug message to file (always enabled, independent of trace setting)
+        /// </summary>
+        private static void DebugLog(string method, string message)
+        {
+            try
+            {
+                string dir = System.IO.Path.GetDirectoryName(debugLogPath);
+                if (!System.IO.Directory.Exists(dir))
+                    System.IO.Directory.CreateDirectory(dir);
+                string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " [" + method + "] " + message;
+                System.IO.File.AppendAllText(debugLogPath, line + Environment.NewLine);
+            }
+            catch { }
+        }
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="scopefocus"/> class.
         /// Must be public for COM registration.
         /// </summary>
@@ -152,6 +179,7 @@ namespace ASCOM.scopefocus
             tl = new TraceLogger("", "ECAA Rotator");
             tl.Enabled = traceState;
             tl.LogMessage("Rotator", "Starting initialization");
+            DebugLog("Rotator", "Starting initialization, trace=" + traceState);
 
             connectedState = false; // Initialise connected to false
             utilities = new Util(); //Initialise util object
@@ -324,6 +352,7 @@ namespace ASCOM.scopefocus
                         tcpHost = GetProfileValue(p, tcpHostProfileName, tcpHostDefault);
                         tcpPort = ParseInt(GetProfileValue(p, tcpPortProfileName, tcpPortDefault), 4030);
                         commandTimeoutMs = ParseInt(GetProfileValue(p, commandTimeoutProfileName, commandTimeoutDefault), 3000);
+                        tcpPassword = GetProfileValue(p, tcpPasswordProfileName, tcpPasswordDefault);
                         setPos = GetProfileValue(p, "SetPos", "false").ToLowerInvariant().Equals("true");
                         contHold = GetProfileValue(p, "ContHold", "false").ToLowerInvariant().Equals("true");
 
@@ -339,9 +368,18 @@ namespace ASCOM.scopefocus
 
                         try
                         {
+                            tl.LogMessage("Transport", transport);
+                            tl.LogMessage("TcpHost", tcpHost);
+                            tl.LogMessage("TcpPort", tcpPort.ToString());
+                            tl.LogMessage("TcpPassword", string.IsNullOrEmpty(tcpPassword) ? "(empty)" : "(set, length=" + tcpPassword.Length + ")");
+                            DebugLog("Connect", "Transport=" + transport + " Host=" + tcpHost + " Port=" + tcpPort + " HasPassword=" + !string.IsNullOrEmpty(tcpPassword));
+                            
                             connection = CreateConnection();
                             tl.LogMessage("Connecting to rotator", connection.EndpointDescription);
+                            DebugLog("Connect", "Connecting to " + connection.EndpointDescription);
                             connection.Connect();
+                            tl.LogMessage("Connection", "SUCCESS");
+                            DebugLog("Connect", "SUCCESS");
                             connectedState = true;
                             lastLink = true;
 
@@ -364,21 +402,62 @@ namespace ASCOM.scopefocus
                             string versn = verTrim.Replace('V', ' ').Trim();
                             tl.LogMessage("Firmware Version: ", versn.ToString());
 
-                            // Read reversed direction state from firmware
+                            // Verify this is a Rotator, not a Focuser
+                            try
+                            {
+                                string devType = CommandString("T#", false);
+                                string devTrim = devType.Replace('#', ' ').Trim();
+                                if (devTrim != "T Rotator")
+                                {
+                                    throw new Exception("Device reports type '" + devTrim + "', expected 'T Rotator'. "
+                                        + "This may be a focuser or unknown device. Check the firmware on your ESP8266.");
+                                }
+                                tl.LogMessage("Device type", "confirmed Rotator");
+                            }
+                            catch (Exception ex) when (!(ex is ASCOM.NotConnectedException))
+                            {
+                                tl.LogMessage("Device type check", ex.Message);
+                                throw new ASCOM.NotConnectedException(
+                                    "The device on " + comPort + " is NOT an ECAA Rotator. "
+                                    + "It may be running focuser firmware. "
+                                    + "Please flash the ECAA Rotator firmware (ESP8266RotatorFirmware.ino). "
+                                    + "Detail: " + ex.Message);
+                            }
+
+                            // Read reversed direction state and homeOffsetSteps from firmware
                             try
                             {
                                 string jsonStatus = CommandString("I#", false);
                                 string jsonTrim = jsonStatus.Replace('#', ' ').Trim();
                                 isReversed = jsonTrim.Contains("\"reversed\":true");
                                 tl.LogMessage("Reverse state: ", isReversed.ToString());
+
+                                // Parse homeOffsetSteps from JSON: "homeOffsetSteps":-1234
+                                int idx = jsonTrim.IndexOf("\"homeOffsetSteps\":");
+                                if (idx >= 0)
+                                {
+                                    idx += 19; // length of "homeOffsetSteps":
+                                    int end = jsonTrim.IndexOfAny(new char[] { ',', ' ', '}' }, idx);
+                                    if (end < 0) end = jsonTrim.Length;
+                                    string val = jsonTrim.Substring(idx, end - idx);
+                                    if (long.TryParse(val, out long parsed))
+                                    {
+                                        homeOffsetSteps = parsed;
+                                        tl.LogMessage("HomeOffsetSteps: ", homeOffsetSteps.ToString());
+                                    }
+                                }
                             }
                             catch
                             {
                                 isReversed = false;
+                                homeOffsetSteps = 0;
                             }
                         }
                         catch (Exception ex)
                         {
+                            DebugLog("Connect", "FAILED: " + ex.GetType().Name + " - " + ex.Message);
+                            if (ex.InnerException != null)
+                                DebugLog("Connect", "Inner: " + ex.InnerException.Message);
                             connectedState = false;
                             lastLink = false;
                             if (connection != null)
@@ -551,15 +630,18 @@ namespace ASCOM.scopefocus
 
         public void Move(float pos)
         {
+            lastUpdate = 0; // force Position refresh next read
             
             // float moveTo = rotatorPosition * stepsPerDegree + Position * stepsPerDegree;  // corrects for 100 steps per degree, need to replace with user defined variable.  
             double moveTo = StepperPos + RelativeAngleToMotorSteps(pos);  // current position in steps + number of steps needed to 
             targetPosition = pos;
+            tl.LogMessage("Move called", $"relative={pos:F4}° stepperPos={StepperPos} moveTo={moveTo:F0}");
             if (moveTo >= 720 * stepsPerDegree) // was 72000
                 moveTo -= 360 * stepsPerDegree;
             if (moveTo < 0)
                 moveTo += 360 * stepsPerDegree;
-            CommandString("M " + Math.Round(moveTo, 0) + "#", false);  // Position was 'int value' for focuser
+            string resp = CommandString("M " + Math.Round(moveTo, 0) + "#", false);  // Position was 'int value' for focuser
+            tl.LogMessage("Move response", resp);
             lastMoving = true;  //remd 1-12-15
 
             //  tl.LogMessage("Move", Position.ToString()); // Move by this amount
@@ -655,6 +737,7 @@ namespace ASCOM.scopefocus
 
         public void MoveAbsolute(float pos)
         {
+            lastUpdate = 0; // force Position refresh next read
             var stepPosition = PositionAngleToMotorSteps(pos);
             targetPosition = pos;
          //   TargetPosition = pos;
@@ -681,6 +764,30 @@ namespace ASCOM.scopefocus
             CommandString("P " + Math.Round(logicalSteps, 0).ToString() + "#", false);
             targetPosition = position;
             tl.LogMessage("Sync", "Synced position to " + position.ToString("F2") + " degrees (" + Math.Round(logicalSteps, 0).ToString() + " logical steps)");
+
+            // Refresh homeOffsetSteps from firmware so MechanicalPosition stays accurate
+            try
+            {
+                string jsonStatus = CommandString("I#", false);
+                string jsonTrim = jsonStatus.Replace('#', ' ').Trim();
+                int idx = jsonTrim.IndexOf("\"homeOffsetSteps\":");
+                if (idx >= 0)
+                {
+                    idx += 19;
+                    int end = jsonTrim.IndexOfAny(new char[] { ',', ' ', '}' }, idx);
+                    if (end < 0) end = jsonTrim.Length;
+                    string val = jsonTrim.Substring(idx, end - idx);
+                    if (long.TryParse(val, out long parsed))
+                    {
+                        homeOffsetSteps = parsed;
+                        tl.LogMessage("Sync", "Updated homeOffsetSteps to " + homeOffsetSteps.ToString());
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                tl.LogMessage("Sync", "Failed to refresh homeOffsetSteps: " + ex.Message);
+            }
         }
 
         // this is the stepper motor position in steps.  
@@ -713,6 +820,25 @@ namespace ASCOM.scopefocus
 
                 //tl.LogMessage("Position Get", rotatorPosition.ToString()); // This rotator has instantaneous movement
                 //return rotatorPosition;
+            }
+        }
+
+        /// <summary>
+        /// Raw mechanical position of the rotator in degrees (0..360).
+        /// Computed from the physical step count so it reflects the actual
+        /// stepper position, independent of the sky-angle sync offset.
+        /// </summary>
+        public float MechanicalPosition
+        {
+            get
+            {
+                DoUpdate();
+                // lastPos is logical steps from G#.
+                // Reconstruct physical steps = logical + homeOffsetSteps,
+                // then convert to mechanical degrees (wrapped to 0..360).
+                float mechanicalDeg = (lastPos + homeOffsetSteps) % (360.0F * stepsPerDegree) / stepsPerDegree;
+                if (mechanicalDeg < 0) mechanicalDeg += 360.0F;
+                return mechanicalDeg;
             }
         }
 
@@ -832,6 +958,7 @@ namespace ASCOM.scopefocus
 
                 string valTrim = vals[0].Replace('#', ' ');
                 string pos = valTrim.Replace('P', ' ').Trim();
+                tl.LogMessage("DoUpdate", $"G response raw='{val}' logicalSteps={pos}");
                 // these values are used in the "Get" calls.  That way the client gets an immediate
                 // response.  However it may up to 1 second out of date.
                 // Thus "lastMoving" must be set to true when the move is initiated in "Move"
@@ -872,15 +999,63 @@ namespace ASCOM.scopefocus
                     throw new ASCOM.NotConnectedException("No TCP host selected");
                 }
 
-                return new TcpRotatorConnection(tcpHost, tcpPort, commandTimeoutMs);
+                return new TcpRotatorConnection(tcpHost, tcpPort, commandTimeoutMs, tcpPassword);
+            }
+
+            if (string.IsNullOrWhiteSpace(comPort) || comPort == "COM1")
+            {
+                string detected = DetectRotatorPort();
+                if (!string.IsNullOrWhiteSpace(detected))
+                {
+                    tl.LogMessage("COM port auto-detected", detected);
+                    comPort = detected;
+                }
             }
 
             if (string.IsNullOrWhiteSpace(comPort))
             {
-                throw new ASCOM.NotConnectedException("No COM port selected");
+                throw new ASCOM.NotConnectedException("No COM port selected and auto-detection failed. "
+                    + "Please open Setup, select the correct COM port, or use the Detect button.");
             }
 
             return new SerialRotatorConnection(comPort);
+        }
+
+        /// <summary>
+        /// Scan available COM ports for an ECAA Rotator device.
+        /// </summary>
+        private static string DetectRotatorPort()
+        {
+            string[] ports = System.IO.Ports.SerialPort.GetPortNames();
+            foreach (string port in ports)
+            {
+                try
+                {
+                    using (var sp = new System.IO.Ports.SerialPort(port, 9600, System.IO.Ports.Parity.None, 8, System.IO.Ports.StopBits.One))
+                    {
+                        sp.ReadTimeout = 2000;
+                        sp.WriteTimeout = 2000;
+                        sp.DtrEnable = true;
+                        sp.RtsEnable = true;
+                        sp.Open();
+                        System.Threading.Thread.Sleep(3000);
+                        sp.DiscardInBuffer();
+                        sp.DiscardOutBuffer();
+                        sp.WriteLine("T#");
+                        System.Threading.Thread.Sleep(300);
+                        string response = sp.ReadExisting();
+                        if (!string.IsNullOrEmpty(response) && response.Contains("T Rotator"))
+                        {
+                            return port;
+                        }
+                    }
+                }
+                catch
+                {
+                    // Port unavailable — skip
+                }
+            }
+            return null;
         }
 
         internal static int ParseInt(string value, int defaultValue)
@@ -1017,6 +1192,10 @@ namespace ASCOM.scopefocus
                 tcpHost = GetProfileValue(driverProfile, tcpHostProfileName, tcpHostDefault);
                 tcpPort = ParseInt(GetProfileValue(driverProfile, tcpPortProfileName, tcpPortDefault), 4030);
                 commandTimeoutMs = ParseInt(GetProfileValue(driverProfile, commandTimeoutProfileName, commandTimeoutDefault), 3000);
+                tcpPassword = GetProfileValue(driverProfile, tcpPasswordProfileName, tcpPasswordDefault);
+                stepsPerDegree = ParseInt(GetProfileValue(driverProfile, "StepsPerDegree", "100"), 100);
+                maxSpeed = ParseInt(GetProfileValue(driverProfile, "MaxSpeed", "800"), 800);
+                acceleration = ParseInt(GetProfileValue(driverProfile, "Acceleration", "1000"), 1000);
             }
         }
 
@@ -1035,6 +1214,10 @@ namespace ASCOM.scopefocus
                 driverProfile.WriteValue(driverID, tcpHostProfileName, tcpHost.ToString());
                 driverProfile.WriteValue(driverID, tcpPortProfileName, tcpPort.ToString());
                 driverProfile.WriteValue(driverID, commandTimeoutProfileName, commandTimeoutMs.ToString());
+                driverProfile.WriteValue(driverID, tcpPasswordProfileName, tcpPassword ?? "");
+                driverProfile.WriteValue(driverID, "StepsPerDegree", stepsPerDegree.ToString());
+                driverProfile.WriteValue(driverID, "MaxSpeed", maxSpeed.ToString());
+                driverProfile.WriteValue(driverID, "Acceleration", acceleration.ToString());
             }
         }
 

@@ -32,3 +32,7 @@ build/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# NINA de-rotator plugin build output and packages
+nina_de_rotator_plugin/Builds/
+nina_de_rotator_plugin/*.zip

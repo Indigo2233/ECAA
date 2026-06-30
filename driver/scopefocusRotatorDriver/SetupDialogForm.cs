@@ -1,330 +1,398 @@
 using System;
-using System.Collections.Generic;
-using System.ComponentModel;
 using System.Drawing;
+using System.IO;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Windows.Forms;
 using ASCOM.Utilities;
-using ASCOM.scopefocus;
 
 namespace ASCOM.scopefocus
 {
-    [ComVisible(false)]					// Form not registered for COM!
+    [ComVisible(false)]
     public partial class SetupDialogForm : Form
     {
-        private static readonly Color BackgroundColor = Color.FromArgb(17, 19, 24);
-        private static readonly Color PanelAltColor = Color.FromArgb(32, 39, 52);
-        private static readonly Color LineColor = Color.FromArgb(56, 66, 82);
-        private static readonly Color FieldColor = Color.FromArgb(18, 23, 32);
+        private static readonly Color BgColor = Color.FromArgb(17, 19, 24);
+        private static readonly Color FieldBg = Color.FromArgb(18, 23, 32);
+        private static readonly Color DisabledBg = Color.FromArgb(32, 39, 52);
         private static readonly Color TextColor = Color.FromArgb(242, 245, 248);
-        private static readonly Color MutedColor = Color.FromArgb(174, 184, 198);
+        private static readonly Color LabelColor = Color.FromArgb(174, 184, 198);
         private static readonly Color AccentColor = Color.FromArgb(77, 182, 172);
-        private static readonly Color AccentTextColor = Color.FromArgb(7, 18, 17);
+        private static readonly Color BorderColor = Color.FromArgb(56, 66, 82);
+
+        private static void DebugLog(string method, string message)
+        {
+            try
+            {
+                string logPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                    "ASCOM", "Logs", "ECAA-Rotator-Debug.log");
+                string dir = Path.GetDirectoryName(logPath);
+                if (!Directory.Exists(dir))
+                    Directory.CreateDirectory(dir);
+                string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " [" + method + "] " + message;
+                File.AppendAllText(logPath, line + Environment.NewLine);
+            }
+            catch { }
+        }
 
         public SetupDialogForm()
         {
             InitializeComponent();
-            // Initialise current values of user settings from the ASCOM Profile
-            InitUI();
+            LoadSettings();
             ApplyTheme();
+            UpdateFieldStates();
+            ValidateAllFields();
+
+            foreach (Control c in Controls)
+            {
+                if (c is TextBox)
+                    c.KeyDown += TextBox_KeyDown;
+            }
         }
 
-        private void cmdOK_Click(object sender, EventArgs e) // OK button event handler
+        private void TextBox_KeyDown(object sender, KeyEventArgs e)
         {
-
-            if (!ValidateInputs())
+            if (e.Control && e.KeyCode == Keys.A)
             {
-                this.DialogResult = DialogResult.None;
+                ((TextBox)sender).SelectAll();
+                e.SuppressKeyPress = true;
+            }
+        }
+
+        private void LoadSettings()
+        {
+            chkTrace.Checked = Rotator.traceState;
+
+            cboTransport.Items.Clear();
+            cboTransport.Items.AddRange(new object[] { "Serial", "TCP" });
+            cboTransport.SelectedItem = string.Equals(Rotator.transport, "TCP", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(Rotator.transport, "WiFi TCP", StringComparison.OrdinalIgnoreCase)
+                ? "TCP" : "Serial";
+
+            cboComPort.Items.Clear();
+            cboComPort.Items.AddRange(System.IO.Ports.SerialPort.GetPortNames());
+            if (cboComPort.Items.Contains(Rotator.comPort))
+                cboComPort.SelectedItem = Rotator.comPort;
+            else
+                cboComPort.Text = Rotator.comPort;
+
+            using (Profile p = new Profile())
+            {
+                p.DeviceType = "Rotator";
+                txtTcpHost.Text = Rotator.GetProfileValue(p, Rotator.tcpHostProfileName, Rotator.tcpHostDefault);
+                txtTcpPort.Text = Rotator.GetProfileValue(p, Rotator.tcpPortProfileName, Rotator.tcpPortDefault);
+                txtTimeout.Text = Rotator.GetProfileValue(p, Rotator.commandTimeoutProfileName, Rotator.commandTimeoutDefault);
+                txtTcpPassword.Text = Rotator.GetProfileValue(p, Rotator.tcpPasswordProfileName, Rotator.tcpPasswordDefault);
+                txtStepsPerDegree.Text = Rotator.GetProfileValue(p, "StepsPerDegree", "100");
+                txtMaxSpeed.Text = Rotator.GetProfileValue(p, "MaxSpeed", "800");
+                txtAcceleration.Text = Rotator.GetProfileValue(p, "Acceleration", "1000");
+                chkContHold.Checked = Rotator.GetProfileValue(p, "ContHold", "False").Equals("True", StringComparison.OrdinalIgnoreCase);
+                chkSetPosition.Checked = Rotator.GetProfileValue(p, "SetPos", "False").Equals("True", StringComparison.OrdinalIgnoreCase);
+                txtSetPosition.Text = Rotator.GetProfileValue(p, "Pos", "");
+            }
+        }
+
+        private void cmdOK_Click(object sender, EventArgs e)
+        {
+            if (!ValidateAllFields())
+            {
+                DialogResult = DialogResult.None;
                 return;
             }
-            else
+
+            using (Profile p = new Profile())
             {
-                using (ASCOM.Utilities.Profile p = new Utilities.Profile())
-                {
-                    p.DeviceType = "Rotator";
-                    p.WriteValue(Rotator.driverID, Rotator.transportProfileName, comboBoxTransport.Text);
-                    p.WriteValue(Rotator.driverID, Rotator.comPortLegacyProfileName, comboBoxComPort.Text);
-                    p.WriteValue(Rotator.driverID, Rotator.comPortProfileName, comboBoxComPort.Text);
-                    p.WriteValue(Rotator.driverID, Rotator.tcpHostProfileName, textBoxTcpHost.Text.Trim());
-                    p.WriteValue(Rotator.driverID, Rotator.tcpPortProfileName, textBoxTcpPort.Text.Trim());
-                    p.WriteValue(Rotator.driverID, Rotator.commandTimeoutProfileName, textBoxTimeout.Text.Trim());
-                    p.WriteValue(Rotator.driverID, "SetPos", checkBox1.Checked.ToString());
-                    // 6-16-16 added 2 lines below
-                    //   p.WriteValue(Rotator.driverID, "Reverse", reverseCheckBox1.Checked.ToString());  // motor sitting shaft up turns clockwise with increasing numbers if NOT reversed
-                    p.WriteValue(Rotator.driverID, "ContHold", checkBox2.Checked.ToString());
-
-
-                    p.WriteValue(Rotator.driverID, "StepsPerDegree", textBox2.Text.ToString());
-                    //   p.WriteValue(Focuser.driverID, "RPM", textBoxRpm.Text);
-                    if (checkBox1.Checked)
-                    {
-                        p.WriteValue(Rotator.driverID, "Pos", textBox1.Text.ToString());
-                    }
-                    //    p.WriteValue(Focuser.driverID, "TempDisp", radioCelcius.Checked ? "C" : "F");
-                }
-                Dispose();
-
-
-
-
-                // Place any validation constraint checks here
-                // Update the state variables with results from the dialogue
-                Rotator.transport = comboBoxTransport.Text;
-                Rotator.comPort = comboBoxComPort.Text;
-                Rotator.tcpHost = textBoxTcpHost.Text.Trim();
-                Rotator.tcpPort = Rotator.ParseInt(textBoxTcpPort.Text.Trim(), 4030);
-                Rotator.commandTimeoutMs = Rotator.ParseInt(textBoxTimeout.Text.Trim(), 3000);
-                Rotator.traceState = chkTrace.Checked;
+                p.DeviceType = "Rotator";
+                p.WriteValue(Rotator.driverID, Rotator.transportProfileName, cboTransport.Text);
+                p.WriteValue(Rotator.driverID, Rotator.comPortProfileName, cboComPort.Text);
+                p.WriteValue(Rotator.driverID, Rotator.comPortLegacyProfileName, cboComPort.Text);
+                p.WriteValue(Rotator.driverID, Rotator.tcpHostProfileName, txtTcpHost.Text.Trim());
+                p.WriteValue(Rotator.driverID, Rotator.tcpPortProfileName, txtTcpPort.Text.Trim());
+                p.WriteValue(Rotator.driverID, Rotator.commandTimeoutProfileName, txtTimeout.Text.Trim());
+                p.WriteValue(Rotator.driverID, Rotator.tcpPasswordProfileName, txtTcpPassword.Text.Trim());
+                p.WriteValue(Rotator.driverID, "StepsPerDegree", txtStepsPerDegree.Text.Trim());
+                p.WriteValue(Rotator.driverID, "MaxSpeed", txtMaxSpeed.Text.Trim());
+                p.WriteValue(Rotator.driverID, "Acceleration", txtAcceleration.Text.Trim());
+                p.WriteValue(Rotator.driverID, "ContHold", chkContHold.Checked.ToString());
+                p.WriteValue(Rotator.driverID, "SetPos", chkSetPosition.Checked.ToString());
+                if (chkSetPosition.Checked)
+                    p.WriteValue(Rotator.driverID, "Pos", txtSetPosition.Text.Trim());
+                p.WriteValue(Rotator.driverID, Rotator.traceStateProfileName, chkTrace.Checked.ToString());
             }
+
+            Rotator.transport = cboTransport.Text;
+            Rotator.comPort = cboComPort.Text;
+            Rotator.tcpHost = txtTcpHost.Text.Trim();
+            Rotator.tcpPort = Rotator.ParseInt(txtTcpPort.Text.Trim(), 4030);
+            Rotator.commandTimeoutMs = Rotator.ParseInt(txtTimeout.Text.Trim(), 3000);
+            Rotator.tcpPassword = txtTcpPassword.Text.Trim();
+            Rotator.stepsPerDegree = Rotator.ParseInt(txtStepsPerDegree.Text.Trim(), 100);
+            Rotator.maxSpeed = Rotator.ParseInt(txtMaxSpeed.Text.Trim(), 800);
+            Rotator.acceleration = Rotator.ParseInt(txtAcceleration.Text.Trim(), 1000);
+            Rotator.traceState = chkTrace.Checked;
         }
-        private void cmdCancel_Click(object sender, EventArgs e) // Cancel button event handler
+
+        private void cmdCancel_Click(object sender, EventArgs e)
         {
             Close();
         }
 
-        private void BrowseToAscom(object sender, EventArgs e) // Click on ASCOM logo event handler
+        private void BrowseToAscom(object sender, EventArgs e)
         {
-            try
-            {
-                System.Diagnostics.Process.Start("http://ascom-standards.org/");
-            }
-            catch (System.ComponentModel.Win32Exception noBrowser)
-            {
-                if (noBrowser.ErrorCode == -2147467259)
-                    MessageBox.Show(noBrowser.Message);
-            }
-            catch (System.Exception other)
-            {
-                MessageBox.Show(other.Message);
-            }
-        }
-
-        private bool ValidateInputs()
-        {
-            int numericValue;
-            if (string.IsNullOrWhiteSpace(textBox2.Text) || !int.TryParse(textBox2.Text.Trim(), out numericValue) || numericValue <= 0)
-            {
-                MessageBox.Show("You must specify a positive value for Steps per Degree");
-                return false;
-            }
-            if ((string.IsNullOrWhiteSpace(textBox1.Text) && checkBox1.Checked))
-            {
-                MessageBox.Show("You must specify a position when Set Position is checked");
-                return false;
-            }
-            if (comboBoxTransport.Text == "TCP" && string.IsNullOrWhiteSpace(textBoxTcpHost.Text))
-            {
-                MessageBox.Show("You must specify a TCP host");
-                return false;
-            }
-            if (!int.TryParse(textBoxTcpPort.Text.Trim(), out numericValue) || numericValue <= 0)
-            {
-                MessageBox.Show("You must specify a valid TCP port");
-                return false;
-            }
-            if (!int.TryParse(textBoxTimeout.Text.Trim(), out numericValue) || numericValue <= 0)
-            {
-                MessageBox.Show("You must specify a valid command timeout");
-                return false;
-            }
-            return true;
-        }
-
-        private void checkTextBox() //don't allow close with steps/dgree blank or set pos checked and blank position
-        {
-            int numericValue;
-            if (string.IsNullOrWhiteSpace(textBox2.Text) || !int.TryParse(textBox2.Text.Trim(), out numericValue) || numericValue <= 0)
-                cmdOK.Enabled = false; 
-            else if ((string.IsNullOrWhiteSpace(textBox1.Text) && checkBox1.Checked))
-                cmdOK.Enabled = false;
-            else if (comboBoxTransport.Text == "TCP" && string.IsNullOrWhiteSpace(textBoxTcpHost.Text))
-                cmdOK.Enabled = false;
-            else if (!int.TryParse(textBoxTcpPort.Text.Trim(), out numericValue) || numericValue <= 0)
-                cmdOK.Enabled = false;
-            else if (!int.TryParse(textBoxTimeout.Text.Trim(), out numericValue) || numericValue <= 0)
-                cmdOK.Enabled = false;
-            else 
-                cmdOK.Enabled = true;
-        }
-
-
-        private void InitUI()
-        {
-           
-            chkTrace.Checked = Rotator.traceState;
-            comboBoxTransport.Items.Clear();
-            comboBoxTransport.Items.AddRange(new object[] { "Serial", "TCP" });
-            comboBoxTransport.SelectedItem = string.Equals(Rotator.transport, "TCP", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(Rotator.transport, "WiFi TCP", StringComparison.OrdinalIgnoreCase)
-                ? "TCP"
-                : "Serial";
-
-            // set the list of com ports to those that are currently available
-            comboBoxComPort.Items.Clear();
-            comboBoxComPort.Items.AddRange(System.IO.Ports.SerialPort.GetPortNames());      // use System.IO because it's static
-            // select the current port if possible
-            if (comboBoxComPort.Items.Contains(Rotator.comPort))
-            {
-                comboBoxComPort.SelectedItem = Rotator.comPort;
-            }
-            else
-            {
-                comboBoxComPort.Text = Rotator.comPort;
-            }
-            using (ASCOM.Utilities.Profile p = new Utilities.Profile())
-            {
-                p.DeviceType = "Rotator";
-                textBoxTcpHost.Text = Rotator.GetProfileValue(p, Rotator.tcpHostProfileName, Rotator.tcpHostDefault);
-                textBoxTcpPort.Text = Rotator.GetProfileValue(p, Rotator.tcpPortProfileName, Rotator.tcpPortDefault);
-                textBoxTimeout.Text = Rotator.GetProfileValue(p, Rotator.commandTimeoutProfileName, Rotator.commandTimeoutDefault);
-                textBox2.Text = Rotator.GetProfileValue(p, "StepsPerDegree", "100");
-                if (p.GetValue(Rotator.driverID, "ContHold") == "True")
-                    checkBox2.Checked = true;
-                else
-                    checkBox2.Checked = false;
-            }
-            if (!checkBox1.Checked)
-                textBox1.Enabled = false;
-            UpdateTransportFields();
-            checkTextBox();
-        }
-
-        private void checkBox1_CheckedChanged(object sender, EventArgs e)
-        {
-            bool enable = false;
-            if (checkBox1.Checked)
-                enable = true;
-
-
-            //  label2.Enabled = enable;
-            textBox1.Enabled = enable;
-            RefreshConnectionFieldTheme();
-            checkTextBox();
+            try { System.Diagnostics.Process.Start("http://ascom-standards.org/"); }
+            catch { }
         }
 
         private void chkTrace_CheckedChanged(object sender, EventArgs e)
         {
-            if (chkTrace.Checked)
-                Rotator.traceState = true;
-            else
-                Rotator.traceState = false;
+            Rotator.traceState = chkTrace.Checked;
         }
 
-
-
-        private void textBox2_TextChanged(object sender, EventArgs e)
+        private void cboTransport_SelectedIndexChanged(object sender, EventArgs e)
         {
-            checkTextBox();
+            UpdateFieldStates();
+            ValidateAllFields();
         }
 
-        private void textBox1_TextChanged(object sender, EventArgs e)
+        private void chkSetPosition_CheckedChanged(object sender, EventArgs e)
         {
-            checkTextBox();
+            txtSetPosition.Enabled = chkSetPosition.Checked;
+            StyleTextBox(txtSetPosition);
+            ValidateAllFields();
         }
 
-        private void comboBoxTransport_SelectedIndexChanged(object sender, EventArgs e)
+        private void ValidateFields(object sender, EventArgs e)
         {
-            UpdateTransportFields();
-            checkTextBox();
+            ValidateAllFields();
         }
 
-        private void connectionTextBox_TextChanged(object sender, EventArgs e)
+        private bool ValidateAllFields()
         {
-            checkTextBox();
+            int val;
+            bool valid = true;
+
+            if (string.IsNullOrWhiteSpace(txtStepsPerDegree.Text) || !int.TryParse(txtStepsPerDegree.Text.Trim(), out val) || val <= 0)
+                valid = false;
+            if (cboTransport.Text == "TCP" && string.IsNullOrWhiteSpace(txtTcpHost.Text))
+                valid = false;
+            if (!int.TryParse(txtTcpPort.Text.Trim(), out val) || val <= 0)
+                valid = false;
+            if (!int.TryParse(txtTimeout.Text.Trim(), out val) || val <= 0)
+                valid = false;
+            if (string.IsNullOrWhiteSpace(txtMaxSpeed.Text) || !int.TryParse(txtMaxSpeed.Text.Trim(), out val) || val <= 0)
+                valid = false;
+            if (string.IsNullOrWhiteSpace(txtAcceleration.Text) || !int.TryParse(txtAcceleration.Text.Trim(), out val) || val <= 0)
+                valid = false;
+            if (chkSetPosition.Checked && string.IsNullOrWhiteSpace(txtSetPosition.Text))
+                valid = false;
+
+            cmdOK.Enabled = valid;
+            return valid;
         }
 
-        private void UpdateTransportFields()
+        private void UpdateFieldStates()
         {
-            bool serialSelected = comboBoxTransport.Text != "TCP";
-            comboBoxComPort.Enabled = serialSelected;
-            textBoxTcpHost.Enabled = !serialSelected;
-            textBoxTcpPort.Enabled = !serialSelected;
-            RefreshConnectionFieldTheme();
+            bool isTcp = cboTransport.Text == "TCP";
+            cboComPort.Enabled = !isTcp;
+            txtTcpHost.Enabled = isTcp;
+            txtTcpPort.Enabled = isTcp;
+            txtTcpPassword.Enabled = isTcp;
+
+            StyleComboBox(cboComPort);
+            StyleTextBox(txtTcpHost);
+            StyleTextBox(txtTcpPort);
+            StyleTextBox(txtTcpPassword);
         }
 
         private void ApplyTheme()
         {
-            BackColor = BackgroundColor;
+            BackColor = BgColor;
             ForeColor = TextColor;
-            Font = new Font("Segoe UI", Font.Size, Font.Style, GraphicsUnit.Point);
 
-            ApplyTheme(Controls);
+            lblTitle.ForeColor = TextColor;
+            lblTitle.BackColor = Color.Transparent;
 
-            label1.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
-            label1.ForeColor = TextColor;
-            picASCOM.BackColor = BackgroundColor;
-            StyleButton(cmdOK, AccentColor, AccentTextColor);
-            StyleButton(cmdCancel, PanelAltColor, TextColor);
-            RefreshConnectionFieldTheme();
-        }
-
-        private void ApplyTheme(Control.ControlCollection controls)
-        {
-            foreach (Control control in controls)
+            foreach (Control c in Controls)
             {
-                Label label = control as Label;
-                if (label != null)
-                {
-                    label.ForeColor = MutedColor;
-                    label.BackColor = Color.Transparent;
-                }
-
-                TextBox textBox = control as TextBox;
-                if (textBox != null)
-                {
-                    StyleInput(textBox);
-                    textBox.BorderStyle = BorderStyle.FixedSingle;
-                }
-
-                ComboBox comboBox = control as ComboBox;
-                if (comboBox != null)
-                {
-                    StyleInput(comboBox);
-                    comboBox.FlatStyle = FlatStyle.Flat;
-                }
-
-                CheckBox checkBox = control as CheckBox;
-                if (checkBox != null)
-                {
-                    checkBox.ForeColor = MutedColor;
-                    checkBox.BackColor = BackgroundColor;
-                    checkBox.FlatStyle = FlatStyle.Flat;
-                    checkBox.FlatAppearance.BorderColor = LineColor;
-                    checkBox.FlatAppearance.CheckedBackColor = AccentColor;
-                }
-
-                if (control.HasChildren)
-                {
-                    ApplyTheme(control.Controls);
-                }
+                if (c is Label) { c.ForeColor = LabelColor; c.BackColor = Color.Transparent; }
+                if (c is TextBox) StyleTextBox((TextBox)c);
+                if (c is ComboBox) StyleComboBox((ComboBox)c);
+                if (c is CheckBox) StyleCheckBox((CheckBox)c);
             }
+
+            StyleButton(cmdOK, AccentColor, Color.Black);
+            StyleButton(cmdCancel, DisabledBg, TextColor);
+            StyleButton(btnTestConnection, DisabledBg, TextColor);
+            picASCOM.BackColor = BgColor;
+            lblTestResult.ForeColor = LabelColor;
+            lblTestResult.BackColor = Color.Transparent;
         }
 
-        private void RefreshConnectionFieldTheme()
+        private void StyleTextBox(TextBox tb)
         {
-            StyleInput(comboBoxComPort);
-            StyleInput(textBoxTcpHost);
-            StyleInput(textBoxTcpPort);
-            StyleInput(textBoxTimeout);
-            StyleInput(textBox1);
-            StyleInput(textBox2);
+            tb.BackColor = tb.Enabled ? FieldBg : DisabledBg;
+            tb.ForeColor = tb.Enabled ? TextColor : LabelColor;
+            tb.BorderStyle = BorderStyle.FixedSingle;
         }
 
-        private void StyleInput(Control control)
+        private void StyleComboBox(ComboBox cb)
         {
-            control.BackColor = control.Enabled ? FieldColor : PanelAltColor;
-            control.ForeColor = control.Enabled ? TextColor : MutedColor;
+            cb.BackColor = cb.Enabled ? FieldBg : DisabledBg;
+            cb.ForeColor = cb.Enabled ? TextColor : LabelColor;
+            cb.FlatStyle = FlatStyle.Flat;
         }
 
-        private void StyleButton(Button button, Color backColor, Color foreColor)
+        private void StyleCheckBox(CheckBox cb)
         {
-            button.FlatStyle = FlatStyle.Flat;
-            button.FlatAppearance.BorderColor = LineColor;
-            button.FlatAppearance.BorderSize = 1;
-            button.BackColor = backColor;
-            button.ForeColor = foreColor;
-            button.UseVisualStyleBackColor = false;
+            cb.ForeColor = LabelColor;
+            cb.BackColor = BgColor;
+            cb.FlatStyle = FlatStyle.Flat;
+            cb.FlatAppearance.BorderColor = BorderColor;
+        }
+
+        private void StyleButton(Button btn, Color bg, Color fg)
+        {
+            btn.FlatStyle = FlatStyle.Flat;
+            btn.FlatAppearance.BorderColor = BorderColor;
+            btn.BackColor = bg;
+            btn.ForeColor = fg;
+        }
+
+        private void btnTestConnection_Click(object sender, EventArgs e)
+        {
+            lblTestResult.ForeColor = LabelColor;
+            lblTestResult.Text = "Testing...";
+            btnTestConnection.Enabled = false;
+            Application.DoEvents();
+
+            string host = txtTcpHost.Text.Trim();
+            int port = Rotator.ParseInt(txtTcpPort.Text.Trim(), 4030);
+            string password = txtTcpPassword.Text.Trim();
+            int connectTimeout = 10000;
+            int readTimeout = 10000;
+
+            DebugLog("TestBtn", "Host=" + host + " Port=" + port + " HasPassword=" + !string.IsNullOrEmpty(password));
+
+            if (cboTransport.Text != "TCP")
+            {
+                lblTestResult.ForeColor = Color.Orange;
+                lblTestResult.Text = "Test only works for TCP transport";
+                btnTestConnection.Enabled = true;
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(host))
+            {
+                lblTestResult.ForeColor = Color.Red;
+                lblTestResult.Text = "TCP Host is empty";
+                btnTestConnection.Enabled = true;
+                return;
+            }
+
+            System.Net.Sockets.TcpClient client = null;
+            try
+            {
+                DebugLog("TestBtn", "Connecting to " + host + ":" + port + " timeout=" + connectTimeout + "ms");
+                lblTestResult.Text = "Connecting to " + host + ":" + port + "...";
+                Application.DoEvents();
+
+                client = new System.Net.Sockets.TcpClient();
+                var result = client.BeginConnect(host, port, null, null);
+                bool connected = result.AsyncWaitHandle.WaitOne(connectTimeout);
+                
+                DebugLog("TestBtn", "WaitOne returned: connected=" + connected + " client.Connected=" + client.Connected);
+                
+                if (!connected || !client.Connected)
+                {
+                    DebugLog("TestBtn", "TIMEOUT - connection failed");
+                    lblTestResult.ForeColor = Color.Red;
+                    lblTestResult.Text = "Timeout connecting to " + host + ":" + port;
+                    btnTestConnection.Enabled = true;
+                    return;
+                }
+                
+                client.EndConnect(result);
+                DebugLog("TestBtn", "TCP connected successfully");
+                lblTestResult.Text = "Connected, sending command...";
+                Application.DoEvents();
+
+                var stream = client.GetStream();
+                stream.ReadTimeout = readTimeout;
+                stream.WriteTimeout = readTimeout;
+
+                DebugLog("TestBtn", "Sending V# command");
+                byte[] cmd = System.Text.Encoding.ASCII.GetBytes("V#");
+                stream.Write(cmd, 0, cmd.Length);
+                stream.Flush();
+                
+                System.Threading.Thread.Sleep(300);
+                
+                DebugLog("TestBtn", "Reading response...");
+                byte[] buf = new byte[128];
+                int len = stream.Read(buf, 0, buf.Length);
+                string response = System.Text.Encoding.ASCII.GetString(buf, 0, len);
+                DebugLog("TestBtn", "Response (" + len + " bytes): " + response.Replace("\r", "\\r").Replace("\n", "\\n"));
+
+                if (!response.Contains("V "))
+                {
+                    DebugLog("TestBtn", "Bad response - no 'V ' found");
+                    lblTestResult.ForeColor = Color.Red;
+                    lblTestResult.Text = "Bad response: " + response.Replace("\r", "").Replace("\n", "");
+                    btnTestConnection.Enabled = true;
+                    return;
+                }
+
+                string version = response.Trim();
+                DebugLog("TestBtn", "Version OK: " + version);
+
+                if (!string.IsNullOrEmpty(password))
+                {
+                    lblTestResult.Text = "Authenticating...";
+                    Application.DoEvents();
+
+                    DebugLog("TestBtn", "Sending auth command K <password>#");
+                    cmd = System.Text.Encoding.ASCII.GetBytes("K " + password + "#");
+                    stream.Write(cmd, 0, cmd.Length);
+                    stream.Flush();
+                    
+                    System.Threading.Thread.Sleep(300);
+                    
+                    len = stream.Read(buf, 0, buf.Length);
+                    response = System.Text.Encoding.ASCII.GetString(buf, 0, len);
+                    DebugLog("TestBtn", "Auth response: " + response);
+
+                    if (!response.StartsWith("K ok"))
+                    {
+                        DebugLog("TestBtn", "Auth FAILED");
+                        lblTestResult.ForeColor = Color.Orange;
+                        lblTestResult.Text = "Auth failed: " + response.Trim();
+                        btnTestConnection.Enabled = true;
+                        return;
+                    }
+                    DebugLog("TestBtn", "Auth OK");
+                }
+
+                DebugLog("TestBtn", "SUCCESS");
+                lblTestResult.ForeColor = Color.LimeGreen;
+                lblTestResult.Text = "OK! " + version;
+            }
+            catch (Exception ex)
+            {
+                DebugLog("TestBtn", "EXCEPTION: " + ex.GetType().Name + " - " + ex.Message);
+                if (ex.InnerException != null)
+                    DebugLog("TestBtn", "Inner: " + ex.InnerException.Message);
+                lblTestResult.ForeColor = Color.Red;
+                string msg = ex.Message;
+                if (ex.InnerException != null) msg = ex.InnerException.Message;
+                lblTestResult.Text = "Error: " + msg;
+            }
+            finally
+            {
+                if (client != null)
+                {
+                    try { client.Close(); } catch { }
+                }
+                btnTestConnection.Enabled = true;
+            }
         }
     }
 }
