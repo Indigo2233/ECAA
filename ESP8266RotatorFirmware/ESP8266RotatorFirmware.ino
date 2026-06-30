@@ -432,7 +432,6 @@ bool moveToPhysicalSteps(long target) {
   long current = stepper.currentPosition();
   
   // Backlash compensation: when moving to larger position, overshoot first
-  // Skip during homing
   long moveDistance = target - current;
   if (!findingHome && settings.backlashSteps > 0 && moveDistance > 0) {
     long overshoot = target + settings.backlashSteps;
@@ -607,13 +606,9 @@ String processCommand(String command, bool isAuthenticated) {
       return statusResponse();
     case 'N': {
       // No-backlash move for field rotation tracking
-      // Directly move without backlash compensation
-      long revolutionSteps = 360L * settings.stepsPerDegree;
-      long physicalA = logicalToPhysicalSteps(value);
-      long physicalB = logicalToPhysicalSteps(value + revolutionSteps);
-      long physicalC = logicalToPhysicalSteps(value - revolutionSteps);
-      long target = choosePhysicalTarget(physicalA, physicalB);
-      target = choosePhysicalTarget(target, physicalC);
+      // Input is PHYSICAL steps (not logical), directly move without backlash
+      // Plugin calculates: physicalSteps = angle * stepsPerDegree + 200 * stepsPerDegree
+      long target = value;
       if (target < 0 || target > settings.maxSteps) {
         return "ERR:out_of_range#";
       }

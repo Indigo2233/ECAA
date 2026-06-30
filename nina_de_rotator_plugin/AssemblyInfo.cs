@@ -5,8 +5,8 @@ using System.Runtime.InteropServices;
 [assembly: Guid("6b3e8e2c-7b9a-4c1d-8e5f-2a3b4c5d6e7f")]
 
 // [MANDATORY] Versioning
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.2.0.0")]
+[assembly: AssemblyFileVersion("1.2.0.0")]
 
 // [MANDATORY] Meta Data
 [assembly: AssemblyTitle("Alt-Az De-Rotator")]

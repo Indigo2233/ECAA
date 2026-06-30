@@ -131,8 +131,32 @@ namespace AltAzDeRotator
                                 if (Math.Abs(_accumulatedError) > 0.01) 
                                 {
                                     double applied = _accumulatedError;
-                                    Logger.Info($"DEROT: MOVE to {targetAbsolute:F4}° (applying {applied:F4}°)");
-                                    rotatorDevice.MoveAbsolute((float)targetAbsolute, token);
+                                    
+                                    // Use N command (no-backlash) for smooth field rotation tracking
+                                    // Formula: steps = angle * stepsPerDegree + centerSteps
+                                    // Default: stepsPerDegree=100, centerSteps=20000
+                                    int stepsPerDegree = 100;
+                                    long targetSteps = (long)(targetAbsolute * stepsPerDegree + 200 * stepsPerDegree);
+                                    string cmd = $"N {targetSteps}#";
+                                    
+                                    bool usedNCommand = false;
+                                    try
+                                    {
+                                        // Try to send N command via ASCOM CommandString
+                                        string response = rotatorDevice.Action("CommandString", cmd);
+                                        Logger.Info($"DEROT: N cmd sent, target={targetAbsolute:F4}° steps={targetSteps} response={response}");
+                                        usedNCommand = true;
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Logger.Debug($"DEROT: N command failed ({ex.Message}), falling back to MoveAbsolute");
+                                    }
+                                    
+                                    if (!usedNCommand)
+                                    {
+                                        Logger.Info($"DEROT: MoveAbsolute to {targetAbsolute:F4}° (applying {applied:F4}°)");
+                                        rotatorDevice.MoveAbsolute((float)targetAbsolute, token);
+                                    }
                                     
                                     // Brief delay then check actual position
                                     await Task.Delay(200, token);

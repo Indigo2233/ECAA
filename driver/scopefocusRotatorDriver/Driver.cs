@@ -228,6 +228,7 @@ namespace ASCOM.scopefocus
                 {
                     var sa = new ArrayList();
                     sa.Add("Home");
+                    sa.Add("CommandString");
                     return sa;
 
                 }
@@ -250,6 +251,11 @@ namespace ASCOM.scopefocus
             {
                 CommandString("H#", false);
                 return "";
+            }
+            else if (actionName == "CommandString")
+            {
+                // Allow sending raw commands to the device
+                return CommandString(actionParameters, false);
             }
             else
                throw new ASCOM.ActionNotImplementedException("Action " + actionName + " is not implemented by this driver");
